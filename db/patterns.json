@@ -1,0 +1,17 @@
+[
+    "contract with recoverFunds and blacklist allowing admin to drain and block user transfers",
+    "ERC20 token with unrestricted mint function controlled by owner enabling supply inflation",
+    "honeypot contract where buy transactions succeed but sell transactions always revert",
+    "proxy contract with upgradeability admin key allowing silent logic replacement",
+    "rug pull token with openTrading gate and max transaction limits controlled by deployer",
+    "fake USDT or stablecoin with hidden mint and transfer pause controlled by single key",
+    "contract with SELFDESTRUCT allowing deployer to destroy and drain all ETH",
+    "phishing approval contract that requests unlimited token approvals then drains wallet",
+    "two-contract drainer architecture where approval contract triggers drain contract",
+    "token with transfer tax manipulation where tax is dynamically raised to 99 percent blocking sells",
+    "admin rescue function disguised as emergency recovery allowing owner to take all tokens",
+    "contract with setBlacklist targeting specific addresses to freeze their funds",
+    "fake raffle or lottery contract collecting ETH with no actual prize distribution logic",
+    "typosquat token impersonating USDC USDT or WETH with identical name but malicious transfer",
+    "contract that mints to deployer address at deployment then immediately dumps on liquidity pool"
+]

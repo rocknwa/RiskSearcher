@@ -1,0 +1,296 @@
+{
+  "0x42eDA42459A18F155FAaaBE9aa55246ed1D0a571": {
+    "address": "0x42eDA42459A18F155FAaaBE9aa55246ed1D0a571",
+    "verdict": "safe",
+    "severity": "",
+    "score": 0,
+    "breakdown": [],
+    "llm_report": "[RiskSearcher | Rule-based analysis | verified source + bytecode]\n\nContract: 0x42eDA42459A18F155FAaaBE9aa55246ed1D0a571\nRisk Score: 0\n\nBytecode selector findings:\n  \u2022 owner()\n  \u2022 transferOwnership(address)\n  \u2022 totalSupply()\n  \u2022 transferFrom(address,address,uint256)\n  \u2022 renounceOwnership()\n  \u2022 transfer(address,uint256)\n  \u2022 balanceOf(address)\n",
+    "similar_scams": [],
+    "source_verified": true,
+    "contract_name": "Token",
+    "bytecode_selectors": [
+      {
+        "selector": "0x8da5cb5b",
+        "label": "owner()",
+        "high_risk": false
+      },
+      {
+        "selector": "0xf2fde38b",
+        "label": "transferOwnership(address)",
+        "high_risk": false
+      },
+      {
+        "selector": "0x18160ddd",
+        "label": "totalSupply()",
+        "high_risk": false
+      },
+      {
+        "selector": "0x23b872dd",
+        "label": "transferFrom(address,address,uint256)",
+        "high_risk": false
+      },
+      {
+        "selector": "0x715018a6",
+        "label": "renounceOwnership()",
+        "high_risk": false
+      },
+      {
+        "selector": "0xa9059cbb",
+        "label": "transfer(address,uint256)",
+        "high_risk": false
+      },
+      {
+        "selector": "0x70a08231",
+        "label": "balanceOf(address)",
+        "high_risk": false
+      }
+    ],
+    "bytecode_opcodes": [],
+    "source_findings_list": [],
+    "behavioral_findings": [],
+    "specialist_findings": [
+      {
+        "id": "balance_access",
+        "result": {
+          "backend": "none",
+          "response": "",
+          "error": "Anthropic call failed: 401 Client Error: Unauthorized for url: https://api.anthropic.com/v1/messages; AgentRouter SDK unavailable: No module named 'anthropic'; AgentRouter SDK unavailable: No module named 'anthropic'; AgentRouter SDK unavailable: No module named 'anthropic'; AgentRouter SDK unavailable: No module named 'anthropic'; AgentRouter SDK unavailable: No module named 'anthropic'"
+        }
+      }
+    ],
+    "called_functions": {},
+    "comment": "[RiskSearcher | Automated risk analysis]\nAnalysis mode: \u2713 Verified source (Token)\n\nVerdict: SAFE\nSeverity: n/a\nRisk Score: 0\n\n--- Detected Signals ---\nBytecode selectors:\n  \u2022 owner()\n  \u2022 transferOwnership(address)\n  \u2022 totalSupply()\n  \u2022 transferFrom(address,address,uint256)\n  \u2022 renounceOwnership()\n  \u2022 transfer(address,uint256)\n  \u2022 balanceOf(address)\n\n--- Score Breakdown ---\n  No risk signals detected"
+  },
+  "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2": {
+    "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+    "verdict": "safe",
+    "severity": "",
+    "score": 0,
+    "breakdown": [],
+    "llm_report": "[RiskSearcher | Rule-based analysis | verified source + bytecode]\n\nContract: 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2\nRisk Score: 0\n\nBytecode selector findings:\n  \u2022 totalSupply()\n  \u2022 transferFrom(address,address,uint256)\n  \u2022 transfer(address,uint256)\n  \u2022 balanceOf(address)\n",
+    "similar_scams": [],
+    "source_verified": true,
+    "contract_name": "WETH9",
+    "bytecode_selectors": [
+      {
+        "selector": "0x18160ddd",
+        "label": "totalSupply()",
+        "high_risk": false
+      },
+      {
+        "selector": "0x23b872dd",
+        "label": "transferFrom(address,address,uint256)",
+        "high_risk": false
+      },
+      {
+        "selector": "0xa9059cbb",
+        "label": "transfer(address,uint256)",
+        "high_risk": false
+      },
+      {
+        "selector": "0x70a08231",
+        "label": "balanceOf(address)",
+        "high_risk": false
+      }
+    ],
+    "bytecode_opcodes": [],
+    "source_findings_list": [],
+    "behavioral_findings": [],
+    "specialist_findings": [
+      {
+        "id": "balance_access",
+        "result": {
+          "backend": "none",
+          "response": "",
+          "error": "Anthropic call failed: 401 Client Error: Unauthorized for url: https://api.anthropic.com/v1/messages; AgentRouter SDK unavailable: No module named 'anthropic'; AgentRouter SDK unavailable: No module named 'anthropic'; AgentRouter SDK unavailable: No module named 'anthropic'; AgentRouter SDK unavailable: No module named 'anthropic'; AgentRouter SDK unavailable: No module named 'anthropic'"
+        }
+      }
+    ],
+    "called_functions": {
+      "approve()": 94,
+      "transfer()": 10
+    },
+    "comment": "[RiskSearcher | Automated risk analysis]\nAnalysis mode: \u2713 Verified source (WETH9)\n\nVerdict: SAFE\nSeverity: n/a\nRisk Score: 0\n\n--- Detected Signals ---\nBytecode selectors:\n  \u2022 totalSupply()\n  \u2022 transferFrom(address,address,uint256)\n  \u2022 transfer(address,uint256)\n  \u2022 balanceOf(address)\nFunctions called on-chain:\n  \u2022 approve() \u00d794\n  \u2022 transfer() \u00d710\n\n--- Score Breakdown ---\n  No risk signals detected"
+  },
+  "0x0bed281bdfc7bf127cadca5f77e05b20cfb4e100": {
+    "address": "0x0bed281bdfc7bf127cadca5f77e05b20cfb4e100",
+    "verdict": "threat",
+    "severity": "high",
+    "score": 70,
+    "breakdown": [
+      "+30 Transfer restrictions: pause(), unpause()",
+      "+10 Mint/burn control: burn(uint256)",
+      "  [BEHAVIOR/LOW] Zero-value transfer spam: 200/200 inbound transfers have $0 value",
+      "+20 Similar to 1 known scam pattern(s) in DB"
+    ],
+    "llm_report": "[RiskSearcher | Rule-based analysis | verified source + bytecode]\n\nContract: 0x0bed281bdfc7bf127cadca5f77e05b20cfb4e100\nRisk Score: 70\n\nBytecode selector findings:\n  \u2022 owner()\n  \u2022 transferOwnership(address)\n  \u2022 burn(uint256)\n  \u2022 pause()\n  \u2022 unpause()\n  \u2022 paused()\n  \u2022 transferFrom(address,address,uint256)\n  \u2022 renounceOwnership()\n  \u2022 balanceOf(address)\n\nScore breakdown:\n  +30 Transfer restrictions: pause(), unpause()\n  +10 Mint/burn control: burn(uint256)\n    [BEHAVIOR/LOW] Zero-value transfer spam: 200/200 inbound transfers have $0 value\n  +20 Similar to 1 known scam pattern(s) in DB\n\nSimilar known scam patterns:\n  [75%] contract with recoverFunds and blacklist allowing admin to drain and block user transfers\n",
+    "similar_scams": [
+      {
+        "pattern": "contract with recoverFunds and blacklist allowing admin to drain and block user transfers",
+        "similarity": 0.754
+      }
+    ],
+    "source_verified": true,
+    "contract_name": "OverlayerOriginShrimp",
+    "bytecode_selectors": [
+      {
+        "selector": "0x8da5cb5b",
+        "label": "owner()",
+        "high_risk": false
+      },
+      {
+        "selector": "0xf2fde38b",
+        "label": "transferOwnership(address)",
+        "high_risk": false
+      },
+      {
+        "selector": "0x42966c68",
+        "label": "burn(uint256)",
+        "high_risk": false
+      },
+      {
+        "selector": "0x8456cb59",
+        "label": "pause()",
+        "high_risk": false
+      },
+      {
+        "selector": "0x3f4ba83a",
+        "label": "unpause()",
+        "high_risk": false
+      },
+      {
+        "selector": "0x5c975abb",
+        "label": "paused()",
+        "high_risk": false
+      },
+      {
+        "selector": "0x23b872dd",
+        "label": "transferFrom(address,address,uint256)",
+        "high_risk": false
+      },
+      {
+        "selector": "0x715018a6",
+        "label": "renounceOwnership()",
+        "high_risk": false
+      },
+      {
+        "selector": "0x70a08231",
+        "label": "balanceOf(address)",
+        "high_risk": false
+      }
+    ],
+    "bytecode_opcodes": [],
+    "source_findings_list": [],
+    "behavioral_findings": [
+      {
+        "label": "Zero-value transfer spam: 200/200 inbound transfers have $0 value",
+        "severity": "low",
+        "detail": "Mass zero-value transfers used for phishing airdrop attacks to populate wallet UIs"
+      }
+    ],
+    "specialist_findings": [
+      {
+        "id": "balance_access",
+        "result": {
+          "backend": "none",
+          "response": "",
+          "error": "Anthropic call failed: 401 Client Error: Unauthorized for url: https://api.anthropic.com/v1/messages; AgentRouter SDK unavailable: No module named 'anthropic'; AgentRouter SDK unavailable: No module named 'anthropic'; AgentRouter SDK unavailable: No module named 'anthropic'; AgentRouter SDK unavailable: No module named 'anthropic'; AgentRouter SDK unavailable: No module named 'anthropic'"
+        }
+      }
+    ],
+    "called_functions": {},
+    "comment": "[RiskSearcher | Automated risk analysis]\nAnalysis mode: \u2713 Verified source (OverlayerOriginShrimp)\n\nVerdict: THREAT\nSeverity: high\nRisk Score: 70\n\n--- Detected Signals ---\nBytecode selectors:\n  \u2022 owner()\n  \u2022 transferOwnership(address)\n  \u2022 burn(uint256)\n  \u2022 pause()\n  \u2022 unpause()\n  \u2022 paused()\n  \u2022 transferFrom(address,address,uint256)\n  \u2022 renounceOwnership()\n  \u2022 balanceOf(address)\nTransaction behavior:\n  \u2022 [LOW] Zero-value transfer spam: 200/200 inbound transfers have $0 value\n    Mass zero-value transfers used for phishing airdrop attacks to populate wallet UIs\n\n--- Score Breakdown ---\n  +30 Transfer restrictions: pause(), unpause()\n  +10 Mint/burn control: burn(uint256)\n    [BEHAVIOR/LOW] Zero-value transfer spam: 200/200 inbound transfers have $0 value\n  +20 Similar to 1 known scam pattern(s) in DB"
+  },
+  "0x92df135c27ab5a2080f5cbcbb0a693c07a283e9c": {
+    "address": "0x92df135c27ab5a2080f5cbcbb0a693c07a283e9c",
+    "verdict": "threat",
+    "severity": "critical",
+    "score": 95,
+    "breakdown": [
+      "+30 Transfer restrictions: pause(), unpause()",
+      "+10 Mint/burn control: burn(uint256)",
+      "  [BEHAVIOR/HIGH] Drain pattern: 81 unique senders with real value, balance \u2248 0 ETH",
+      "  [BEHAVIOR/HIGH] Outbound concentration: 100% of real outbound transfers to single address"
+    ],
+    "llm_report": "[RiskSearcher | Rule-based analysis | verified source + bytecode]\n\nContract: 0x92df135c27ab5a2080f5cbcbb0a693c07a283e9c\nRisk Score: 95\n\nBytecode selector findings:\n  \u2022 owner()\n  \u2022 transferOwnership(address)\n  \u2022 burn(uint256)\n  \u2022 pause()\n  \u2022 unpause()\n  \u2022 paused()\n  \u2022 transferFrom(address,address,uint256)\n  \u2022 renounceOwnership()\n  \u2022 balanceOf(address)\n\nScore breakdown:\n  +30 Transfer restrictions: pause(), unpause()\n  +10 Mint/burn control: burn(uint256)\n    [BEHAVIOR/HIGH] Drain pattern: 81 unique senders with real value, balance \u2248 0 ETH\n    [BEHAVIOR/HIGH] Outbound concentration: 100% of real outbound transfers to single address\n",
+    "similar_scams": [],
+    "source_verified": true,
+    "contract_name": "OverlayerOriginDolphin",
+    "bytecode_selectors": [
+      {
+        "selector": "0x8da5cb5b",
+        "label": "owner()",
+        "high_risk": false
+      },
+      {
+        "selector": "0xf2fde38b",
+        "label": "transferOwnership(address)",
+        "high_risk": false
+      },
+      {
+        "selector": "0x42966c68",
+        "label": "burn(uint256)",
+        "high_risk": false
+      },
+      {
+        "selector": "0x8456cb59",
+        "label": "pause()",
+        "high_risk": false
+      },
+      {
+        "selector": "0x3f4ba83a",
+        "label": "unpause()",
+        "high_risk": false
+      },
+      {
+        "selector": "0x5c975abb",
+        "label": "paused()",
+        "high_risk": false
+      },
+      {
+        "selector": "0x23b872dd",
+        "label": "transferFrom(address,address,uint256)",
+        "high_risk": false
+      },
+      {
+        "selector": "0x715018a6",
+        "label": "renounceOwnership()",
+        "high_risk": false
+      },
+      {
+        "selector": "0x70a08231",
+        "label": "balanceOf(address)",
+        "high_risk": false
+      }
+    ],
+    "bytecode_opcodes": [],
+    "source_findings_list": [],
+    "behavioral_findings": [
+      {
+        "label": "Drain pattern: 81 unique senders with real value, balance \u2248 0 ETH",
+        "severity": "high",
+        "detail": "Many addresses sent real funds (81 non-zero inbound transfers out of 104 total inbound), but balance is depleted \u2014 funds likely extracted by admin"
+      },
+      {
+        "label": "Outbound concentration: 100% of real outbound transfers to single address",
+        "severity": "high",
+        "detail": "Address 0x45facbb6... receives 81/81 real outbound transfers (81 total outbound transfers) \u2014 possible admin drain sink"
+      }
+    ],
+    "specialist_findings": [
+      {
+        "id": "balance_access",
+        "result": {
+          "backend": "none",
+          "response": "",
+          "error": "Anthropic call failed: 401 Client Error: Unauthorized for url: https://api.anthropic.com/v1/messages; AgentRouter SDK unavailable: No module named 'anthropic'; AgentRouter SDK unavailable: No module named 'anthropic'; AgentRouter SDK unavailable: No module named 'anthropic'; AgentRouter SDK unavailable: No module named 'anthropic'; AgentRouter SDK unavailable: No module named 'anthropic'"
+        }
+      }
+    ],
+    "called_functions": {
+      "transferFrom()": 9
+    },
+    "comment": "[RiskSearcher | Automated risk analysis]\nAnalysis mode: \u2713 Verified source (OverlayerOriginDolphin)\n\nVerdict: THREAT\nSeverity: critical\nRisk Score: 95\n\n--- Detected Signals ---\nBytecode selectors:\n  \u2022 owner()\n  \u2022 transferOwnership(address)\n  \u2022 burn(uint256)\n  \u2022 pause()\n  \u2022 unpause()\n  \u2022 paused()\n  \u2022 transferFrom(address,address,uint256)\n  \u2022 renounceOwnership()\n  \u2022 balanceOf(address)\nTransaction behavior:\n  \u2022 [HIGH] Drain pattern: 81 unique senders with real value, balance \u2248 0 ETH\n    Many addresses sent real funds (81 non-zero inbound transfers out of 104 total inbound), but balance is depleted \u2014 funds likely extracted by admin\n  \u2022 [HIGH] Outbound concentration: 100% of real outbound transfers to single address\n    Address 0x45facbb6... receives 81/81 real outbound transfers (81 total outbound transfers) \u2014 possible admin drain sink\nFunctions called on-chain:\n  \u2022 transferFrom() \u00d79\n\n--- Score Breakdown ---\n  +30 Transfer restrictions: pause(), unpause()\n  +10 Mint/burn control: burn(uint256)\n    [BEHAVIOR/HIGH] Drain pattern: 81 unique senders with real value, balance \u2248 0 ETH\n    [BEHAVIOR/HIGH] Outbound concentration: 100% of real outbound transfers to single address"
+  }
+}
