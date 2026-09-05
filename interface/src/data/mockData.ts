@@ -366,6 +366,4 @@ export const SUPPORTED_CHAINS = [
   { name: 'Avalanche', symbol: 'AVAX', color: '#ffb4ab', rpcLatency: '105ms', gasTarget: '26 nAVAX', blockTime: '1.8s', archiveNodes: 'Online' },
 ];
 
-// TODO: replace with your real hosted logo (e.g. /assets/logo.svg served from public/, or a permanent CDN URL).
-// The previous value was a temporary AI-Studio-hosted image link — not safe to rely on long-term.
 export const LOGO_URL = '/assets/logo.svg';
