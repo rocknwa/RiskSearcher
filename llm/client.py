@@ -224,16 +224,32 @@ def _call_agentrouter(prompt: str, model: str = "anthropic/claude-2", timeout: i
 
     try:
         client = Anthropic(auth_token=key, base_url=base)
+
+        def _run_streaming(max_tokens: int) -> str:
+            # Long, multi-category prompts (like the 7-category token-risk
+            # specialist) can genuinely take the model past the SDK's 10-minute
+            # non-streaming estimate. Streaming is the correct fix, not a
+            # workaround — raising max_tokens on a non-streaming call only
+            # makes that estimate worse, since duration scales with the
+            # requested budget.
+            with client.messages.stream(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=max_tokens,
+            ) as stream:
+                for _ in stream.text_stream:
+                    pass  # accumulation happens in get_final_message(); iterate to drive the stream
+                final_message = stream.get_final_message()
+            return _extract_text_from_response(final_message)
+
         # Primary attempt with a modest budget
-        resp = client.messages.create(model=model, messages=[{"role": "user", "content": prompt}], max_tokens=20000)
-        text = _extract_text_from_response(resp)
+        text = _run_streaming(40000)
         if text:
             return text
 
         # If no visible assistant text, retry with a larger budget required by full-size prompts.
         # DeepSeek/GLM have required 16000 for FARTPEPE-sized prompts in practice.
-        resp2 = client.messages.create(model=model, messages=[{"role": "user", "content": prompt}], max_tokens=20000)
-        text2 = _extract_text_from_response(resp2)
+        text2 = _run_streaming(50000)
         if text2:
             return text2
 
