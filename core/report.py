@@ -8,7 +8,7 @@ from pathlib import Path
 
 def _specialist(result) -> tuple[dict | None, str]:
     for finding in result.specialist_findings or []:
-        if finding.get("id") == "balance_access":
+        if finding.get("id") == "token_risk":
             specialist = finding.get("result") or {}
             return specialist, specialist.get("response", "") or ""
     return None, ""
@@ -23,7 +23,7 @@ def render_markdown_report(result) -> str:
         "- Behavioral analysis: ran",
     ]
     if specialist_response:
-        layers.append("- LLM specialist: ran (balance/access-control specialist)")
+        layers.append("- LLM specialist: ran (token-risk specialist — balance/access-control, liquidity, mint privilege, trading controls, upgradeability, ownership, and honeypot/sell-blocking patterns)")
     else:
         reason = (specialist or {}).get("error") or "no specialist response was produced"
         layers.append(f"- LLM specialist: unavailable this run: {reason}")
