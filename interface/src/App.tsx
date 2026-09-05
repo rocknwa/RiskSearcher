@@ -377,7 +377,7 @@ function _transfer(address from, address to, uint256 amount) internal override {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#0b1326] text-[#dae2fd]">
+    <div className="min-h-screen flex flex-col bg-[#0b1326] text-[#dae2fd] overflow-x-hidden">
       {/* Global Header */}
       <Header
         currentView={currentView}

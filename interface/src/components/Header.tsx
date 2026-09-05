@@ -20,14 +20,48 @@ export const Header: React.FC<HeaderProps> = ({
   onDisconnectWallet,
 }) => {
   const [showWalletDropdown, setShowWalletDropdown] = useState(false);
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
+
+  const navItems = [
+    { id: 'landing', label: 'Overview' },
+    { id: 'scanner', label: 'Scanner', locked: !isWalletConnected },
+    { id: 'how-it-works', label: 'How It Works' },
+    { id: 'supported-chains', label: 'Supported Chains' },
+    { id: 'pricing', label: 'Pricing' },
+    { id: 'documentation', label: 'Documentation' },
+  ];
+
+  const handleNavClick = (item: { id: string; locked?: boolean }) => {
+    onNavigate(item.id);
+    if (item.id === 'scanner' && !isWalletConnected) {
+      onOpenWalletModal();
+    }
+    setShowMobileMenu(false);
+  };
+
   return (
     <header className="fixed top-0 w-full z-50 bg-[#060e20]/90 backdrop-blur-xl border-b border-[#222a3d]/60 shadow-[0_1px_8px_rgba(0,0,0,0.5)]">
       <div className="h-16 max-w-[88rem] mx-auto px-4 lg:px-6 flex items-center justify-between gap-4">
         {/* Logo & System Pulse */}
         <div className="flex items-center gap-4">
+          <button
+            id="nav-mobile-menu-btn"
+            onClick={() => setShowMobileMenu((prev) => !prev)}
+            aria-label={showMobileMenu ? 'Close menu' : 'Open menu'}
+            aria-expanded={showMobileMenu}
+            className="lg:hidden w-8 h-8 -ml-1 rounded-lg flex items-center justify-center shrink-0 text-[#c2c6d6] hover:text-[#dae2fd] hover:bg-[#222a3d]/50 transition-colors"
+          >
+            <span className="material-symbols-outlined text-[22px]">
+              {showMobileMenu ? 'close' : 'menu'}
+            </span>
+          </button>
+
           <button 
             id="nav-logo-btn"
-            onClick={() => onNavigate('landing')}
+            onClick={() => {
+              onNavigate('landing');
+              setShowMobileMenu(false);
+            }}
             className="flex items-center gap-2.5 focus:outline-none group text-left"
           >
             <div className="relative flex items-center justify-center">
@@ -63,25 +97,13 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Navigation Links */}
         <nav className="hidden lg:flex items-center gap-1">
-          {[
-            { id: 'landing', label: 'Overview' },
-            { id: 'scanner', label: 'Scanner', locked: !isWalletConnected },
-            { id: 'how-it-works', label: 'How It Works' },
-            { id: 'supported-chains', label: 'Supported Chains' },
-            { id: 'pricing', label: 'Pricing' },
-            { id: 'documentation', label: 'Documentation' },
-          ].map((item) => {
+          {navItems.map((item) => {
             const isActive = currentView === item.id;
             return (
               <button
                 key={item.id}
                 id={`nav-link-${item.id}`}
-                onClick={() => {
-                  onNavigate(item.id);
-                  if (item.id === 'scanner' && !isWalletConnected) {
-                    onOpenWalletModal();
-                  }
-                }}
+                onClick={() => handleNavClick(item)}
                 className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
                   isActive
                     ? 'bg-[#222a3d] text-[#dae2fd] font-semibold'
@@ -98,7 +120,7 @@ export const Header: React.FC<HeaderProps> = ({
         </nav>
 
         {/* Right CTA Actions */}
-        <div className="flex items-center gap-2.5 sm:gap-3">
+        <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
           {isWalletConnected && (
             <button
               id="nav-account-alias-btn"
@@ -121,10 +143,10 @@ export const Header: React.FC<HeaderProps> = ({
               <button
                 id="nav-connect-wallet-btn"
                 onClick={() => setShowWalletDropdown((prev) => !prev)}
-                className="inline-flex items-center justify-center px-3.5 py-1.5 rounded-lg font-semibold text-xs sm:text-sm transition-all active:scale-[0.99] shadow-md bg-[#131b2e] border border-[#4edea3]/40 text-[#4edea3] hover:bg-[#171f33]"
+                className="inline-flex items-center justify-center px-2.5 sm:px-3.5 py-1.5 rounded-lg font-semibold text-xs sm:text-sm transition-all active:scale-[0.99] shadow-md bg-[#131b2e] border border-[#4edea3]/40 text-[#4edea3] hover:bg-[#171f33]"
               >
-                <span className="w-2 h-2 rounded-full bg-[#4edea3] animate-pulse mr-2"></span>
-                <span>Connected</span>
+                <span className="w-2 h-2 rounded-full bg-[#4edea3] animate-pulse sm:mr-2"></span>
+                <span className="hidden sm:inline">Connected</span>
                 <span className="material-symbols-outlined text-[16px] ml-1 text-[#8c909f]">
                   expand_more
                 </span>
@@ -174,12 +196,13 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               id="nav-connect-wallet-btn"
               onClick={onOpenWalletModal}
-              className="inline-flex items-center justify-center px-4 py-2 rounded-lg font-semibold text-xs sm:text-sm transition-all active:scale-[0.99] shadow-md bg-[#4d8eff] text-[#00285d] hover:bg-[#adc6ff] hover:text-[#002e6a]"
+              aria-label="Connect Wallet"
+              className="inline-flex items-center justify-center px-2.5 sm:px-4 py-2 rounded-lg font-semibold text-xs sm:text-sm transition-all active:scale-[0.99] shadow-md bg-[#4d8eff] text-[#00285d] hover:bg-[#adc6ff] hover:text-[#002e6a]"
             >
-              <span className="material-symbols-outlined text-[18px] mr-1.5">
+              <span className="material-symbols-outlined text-[18px] sm:mr-1.5">
                 account_balance_wallet
               </span>
-              <span>Connect Wallet</span>
+              <span className="hidden sm:inline">Connect Wallet</span>
             </button>
           )}
 
@@ -205,6 +228,32 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Mobile Nav Panel */}
+      {showMobileMenu && (
+        <nav className="lg:hidden border-t border-[#222a3d]/60 bg-[#060e20]/95 backdrop-blur-xl px-4 py-2">
+          {navItems.map((item) => {
+            const isActive = currentView === item.id;
+            return (
+              <button
+                key={item.id}
+                id={`nav-link-mobile-${item.id}`}
+                onClick={() => handleNavClick(item)}
+                className={`w-full text-left px-3 py-2.5 rounded-lg text-sm font-medium transition-colors flex items-center justify-between ${
+                  isActive
+                    ? 'bg-[#222a3d] text-[#dae2fd] font-semibold'
+                    : 'text-[#c2c6d6] hover:text-[#dae2fd] hover:bg-[#222a3d]/50'
+                }`}
+              >
+                <span>{item.label}</span>
+                {item.locked && (
+                  <span className="material-symbols-outlined text-[15px] text-[#8c909f]">lock</span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
+      )}
     </header>
   );
 };
