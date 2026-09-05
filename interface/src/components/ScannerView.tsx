@@ -931,22 +931,24 @@ Generated via RiskSearcher Multi-Judge SEC-KERNEL`;
                 </div>
 
                 {/* Input Bar */}
-                <div className="flex items-center gap-2 bg-[#060e20] p-1.5 rounded-lg border border-[#222a3d] focus-within:border-[#4cd7f6]/60 transition-colors">
-                  <span className="material-symbols-outlined text-[#8c909f] pl-2 text-[20px]">
-                    search_insights
-                  </span>
-                  <input
-                    id="scanner-contract-input"
-                    type="text"
-                    value={inputAddress}
-                    onChange={(e) => setInputAddress(e.target.value)}
-                    placeholder="Paste EVM target contract (0x...) to investigate..."
-                    className="flex-1 bg-transparent font-mono text-xs sm:text-sm text-[#dae2fd] placeholder:text-[#8c909f] focus:outline-none px-2"
-                  />
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 bg-[#060e20] p-1.5 rounded-lg border border-[#222a3d] focus-within:border-[#4cd7f6]/60 transition-colors">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="material-symbols-outlined text-[#8c909f] pl-2 text-[20px] shrink-0">
+                      search_insights
+                    </span>
+                    <input
+                      id="scanner-contract-input"
+                      type="text"
+                      value={inputAddress}
+                      onChange={(e) => setInputAddress(e.target.value)}
+                      placeholder="Paste EVM target contract (0x...) to investigate..."
+                      className="flex-1 min-w-0 bg-transparent font-mono text-xs sm:text-sm text-[#dae2fd] placeholder:text-[#8c909f] focus:outline-none px-2 py-1.5 sm:py-0"
+                    />
+                  </div>
                   <button
                     type="submit"
                     disabled={isScanning}
-                    className="bg-[#4d8eff] hover:bg-[#adc6ff] text-[#00285d] hover:text-[#002e6a] px-4 py-2 rounded-lg font-semibold text-xs sm:text-sm flex items-center gap-1.5 transition-all active:scale-[0.99] shadow-sm shrink-0"
+                    className="bg-[#4d8eff] hover:bg-[#adc6ff] text-[#00285d] hover:text-[#002e6a] px-4 py-2 rounded-lg font-semibold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-all active:scale-[0.99] shadow-sm shrink-0 w-full sm:w-auto"
                   >
                     {isScanning ? (
                       <>
