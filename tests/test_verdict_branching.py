@@ -13,7 +13,7 @@ class TestSpecialistSimulationGuards(unittest.TestCase):
         old_sim = os.environ.get("LLMSIMULATE")
         os.environ["LLMSIMULATE"] = "agentrouter-canned"
         try:
-            result = run_specialist("balance_access", "ping")
+            result = run_specialist("token_risk", "ping")
             self.assertEqual(result.get("backend"), "agentrouter")
             self.assertTrue(result.get("_simulated") is True)
             self.assertIn("[SIMULATED", result.get("response", ""))
@@ -30,7 +30,7 @@ class TestSpecialistSimulationGuards(unittest.TestCase):
         os.environ.pop("AGENTROUTER_API_KEY", None)
         os.environ.pop("ANTHROPIC_API_KEY", None)
         try:
-            result = run_specialist("balance_access", "ping")
+            result = run_specialist("token_risk", "ping")
             self.assertEqual(result.get("backend"), "none")
             self.assertTrue(result.get("_simulated") in (True, False))
             self.assertEqual(result.get("response", ""), "")
@@ -95,7 +95,7 @@ class TestSpecialistSimulationGuards(unittest.TestCase):
         os.environ.pop("ANTHROPIC_API_KEY", None)
         try:
             with patch.object(llm_client, "_call_agentrouter", return_value="DeepSeek text response for specialist") as mock_call:
-                result = run_specialist("balance_access", "ping")
+                result = run_specialist("token_risk", "ping")
                 self.assertEqual(result.get("backend"), "agentrouter")
                 self.assertEqual(result.get("model"), "deepseek-v4-flash")
                 self.assertEqual(result.get("response"), "DeepSeek text response for specialist")
@@ -121,7 +121,7 @@ class TestSpecialistSimulationGuards(unittest.TestCase):
                 raise RuntimeError("unexpected model")
 
             with patch.object(llm_client, "_call_agentrouter", side_effect=fake_agentrouter) as mock_call:
-                specialist = run_specialist("balance_access", "ping")
+                specialist = run_specialist("token_risk", "ping")
                 self.assertTrue((specialist.get("backend") or "").startswith("agentrouter"))
                 self.assertEqual(specialist.get("model"), "deepseek-v4-flash")
 

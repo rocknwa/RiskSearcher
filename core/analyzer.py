@@ -224,27 +224,79 @@ def analyze(address: str, ticket_meta: dict = None, chain: str | None = "ethereu
             "similar": similar,
         }
 
-    balance_prompt = (
-        f"You are a security auditor specializing in balance and access-control logic.\n"
+    token_risk_prompt = (
+        f"You are a security auditor specializing in token-holder risk: the ways a token "
+        f"contract's owner or deployer can harm buyers after launch, even without an "
+        f"obvious hack.\n"
         f"Context mode: {specialist_context['mode']}\n"
         f"Contract: {contract_name}\n\n"
     )
     if specialist_context["mode"] == "source":
-        balance_prompt += "Provide a focused analysis of the source code, searching for overridden view functions, gated or conditional balance checks, and any transfer/sell logic that behaves differently depending on msg.sender. Include line references and a concise explanation of the mechanism.\n\n"
-        balance_prompt += "SOURCE_FILES:\n"
+        token_risk_prompt += (
+            "Analyze the source code against the following categories of token-holder "
+            "risk. Report only what you actually find — for each category where a real "
+            "risk exists, state it clearly with line references and a concise "
+            "explanation of the mechanism. Do not mention categories where you find "
+            "nothing; do not speculate about absence.\n\n"
+            "1. BALANCE / ACCESS-CONTROL GATING — overridden view functions, gated or "
+            "conditional balance checks, or transfer/sell logic that behaves differently "
+            "depending on msg.sender or tx.origin.\n"
+            "2. LIQUIDITY-PULL RISK — can the owner or deployer remove liquidity from the "
+            "trading pair unilaterally? Is LP explicitly locked or burned, or is there no "
+            "such protection?\n"
+            "3. MINT-PRIVILEGE ABUSE — can the owner mint new supply after launch with no "
+            "cap or timelock, diluting or enabling a dump against existing holders?\n"
+            "4. TRADING-CONTROL TOGGLES — owner-controlled pause, blacklist, or max-"
+            "transaction/max-wallet functions that could freeze sells or target specific "
+            "holders after launch, even if framed as 'anti-bot' protection.\n"
+            "5. UPGRADEABILITY / PROXY RISK — is this a proxy contract where the "
+            "implementation can be swapped by the owner after launch, letting clean-"
+            "looking logic today be replaced later without holder consent?\n"
+            "6. OWNERSHIP STATUS — is ownership renounced, or does a live owner address "
+            "still hold any of the privileges above? If renounced, note which functions "
+            "become permanently inert as a result.\n"
+            "7. HONEYPOT / SELL-SPECIFIC BLOCKING — does sell behave differently from "
+            "buy in a way that would trap holders? Look for: asymmetric buy vs. sell tax, "
+            "a sell-path-specific revert or require(false), a sell-only allowlist/"
+            "blacklist, or any condition that lets tokens be bought freely but not sold.\n\n"
+        )
+        token_risk_prompt += "SOURCE_FILES:\n"
         for name, content in (specialist_context.get("source_files") or {}).items():
-            balance_prompt += f"-- {name} --\n{content.get('content','')}\n\n"
+            token_risk_prompt += f"-- {name} --\n{content.get('content','')}\n\n"
     else:
-        balance_prompt += "You have only bytecode-derived findings and behavioral traces. Based on selectors/opcodes and transfer history, explain whether a balance or visibility check could be present that gates behavior by caller. Cite the bytecode evidence.\n\n"
-        balance_prompt += "BYTECODE_FINDINGS:\n"
-        balance_prompt += str(specialist_context.get("bytecode_findings") or {})[:4000]
+        token_risk_prompt += (
+            "You have only bytecode-derived findings and behavioral traces. Assess the "
+            "following categories of token-holder risk against the available selectors, "
+            "opcodes, and transfer history. Report only what you actually find — for "
+            "each category where the evidence supports a real risk, state it clearly and "
+            "cite the bytecode evidence. Do not mention categories where you find "
+            "nothing; do not speculate about absence.\n\n"
+            "1. BALANCE / ACCESS-CONTROL GATING — could a balance or visibility check be "
+            "present that gates behavior by caller? Cite the bytecode evidence.\n"
+            "2. LIQUIDITY-PULL RISK — do selectors suggest an owner-only liquidity-removal "
+            "or withdrawal function?\n"
+            "3. MINT-PRIVILEGE ABUSE — is a mint() or equivalent selector present with no "
+            "visible cap/timelock pattern in the opcodes?\n"
+            "4. TRADING-CONTROL TOGGLES — do selectors suggest pause/blacklist/max-tx "
+            "style functions?\n"
+            "5. UPGRADEABILITY / PROXY RISK — do opcodes/selectors indicate a proxy "
+            "pattern (e.g. DELEGATECALL to a mutable address)?\n"
+            "6. OWNERSHIP STATUS — do opcodes suggest an active onlyOwner-style modifier "
+            "is still reachable?\n"
+            "7. HONEYPOT / SELL-SPECIFIC BLOCKING — do selectors, opcodes, or transfer "
+            "history suggest sell behaves differently from buy (asymmetric tax, a sell-"
+            "path-specific revert, or transactions showing buys succeeding while sells "
+            "fail or revert)?\n\n"
+        )
+        token_risk_prompt += "BYTECODE_FINDINGS:\n"
+        token_risk_prompt += str(specialist_context.get("bytecode_findings") or {})[:4000]
 
-    balance_prompt += "\nBEHAVIORAL_SUMMARY:\n"
-    balance_prompt += tx_analysis.get("summary", "")[:2000]
+    token_risk_prompt += "\nBEHAVIORAL_SUMMARY:\n"
+    token_risk_prompt += tx_analysis.get("summary", "")[:2000]
 
     print("[3/5] Running specialist analysis...")
     try:
-        specialist_result = run_specialist("balance_access", balance_prompt)
+        specialist_result = run_specialist("token_risk", token_risk_prompt)
     except Exception as exc:
         specialist_result = {"backend": "none", "response": "", "error": str(exc), "_simulated": False}
 
@@ -338,7 +390,7 @@ def analyze(address: str, ticket_meta: dict = None, chain: str | None = "ethereu
         source_findings_list=source_findings.get("findings", []),
         behavioral_findings=tx_analysis.get("findings", []),
         called_functions=tx_analysis.get("called_functions", {}),
-        specialist_findings=[{"id": "balance_access", "result": specialist_result}],
+        specialist_findings=[{"id": "token_risk", "result": specialist_result}],
         comment=final_reason,
         judge_error=judge_result.get("error", "") if specialist_success else judge_error,
         final_reason=final_reason,
