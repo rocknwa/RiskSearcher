@@ -324,17 +324,17 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 <div className="w-10 h-10 rounded-lg bg-[#060e20] border border-[#4cd7f6]/40 flex items-center justify-center shrink-0">
                   <span className="material-symbols-outlined text-[#4cd7f6] text-[24px]">verified_user</span>
                 </div>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-base text-[#dae2fd] truncate">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-semibold text-base text-[#dae2fd]">
                       Uniswap V2 Router02 Diagnostic Trace
                     </span>
-                    <span className="inline-flex items-center px-2 py-0.5 rounded bg-[#00a572]/20 text-[#4edea3] font-mono text-[10px] font-bold">
+                    <span className="inline-flex items-center px-2 py-0.5 rounded bg-[#00a572]/20 text-[#4edea3] font-mono text-[10px] font-bold shrink-0">
                       SAFE VERDICT
                     </span>
                   </div>
-                  <span className="font-mono text-xs text-[#8c909f] truncate block mt-0.5">
-                    Target: 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D • Ethereum Mainnet
+                  <span className="font-mono text-xs text-[#8c909f] break-all block mt-0.5">
+                    Target: 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D <span className="whitespace-nowrap">• Ethereum Mainnet</span>
                   </span>
                 </div>
               </div>
