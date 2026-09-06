@@ -259,8 +259,14 @@ def _call_agentrouter(prompt: str, model: str = "anthropic/claude-2", timeout: i
         # propagate our intentional LLMError cases
         raise
     except Exception as e:
-        # Wrap other runtime failures (auth, network, server errors)
-        raise LLMError(f"AgentRouter call failed: {e}")
+        # Wrap other runtime failures (auth, network, server errors).
+        # str(e) is sometimes empty for certain low-level connection/SSL
+        # exceptions (seen on some cloud hosts) — include the exception
+        # type and repr() too so we always get something diagnostic,
+        # instead of a blank message after the colon.
+        raise LLMError(
+            f"AgentRouter call failed: [{type(e).__name__}] {e!r}"
+        )
 
 
 def _is_simulation_active() -> bool:
