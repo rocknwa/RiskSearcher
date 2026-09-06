@@ -1,28 +1,25 @@
-"""Tiered LLM client for RiskSearcher.
+"""
+Tiered LLM client for RiskSearcher.
 
-Behavior:
-- Prefer Anthropic if `ANTHROPIC_API_KEY` is set.
-- If missing or failing with rate-limit/quota, try AgentRouter if `AGENTROUTER_API_KEY` is set.
-- If AgentRouter fails with rate-limit/quota, fall back to a GPT model through AgentRouter (same key, different model string), then DeepSeek similarly.
-- If no API keys or all attempts fail, return a graceful degraded result that the caller can include in the report.
+Provider routing:
+- Direct Anthropic -> Anthropic Messages API when ANTHROPIC_API_KEY is set.
+- AgentRouter Claude models -> AgentRouter Anthropic-compatible API.
+- AgentRouter DeepSeek / GLM / GPT models -> AgentRouter OpenAI-compatible
+  Chat Completions API.
+- If all LLM attempts fail, return a graceful rule-only result.
 
-For reproducible testing we support the environment var `LLMSIMULATE` which may be set to:
- - "anthropic-rate"    -> simulate Anthropic rate-limit
- - "agentrouter-rate"  -> simulate AgentRouter rate-limit
- - "all-fail"         -> simulate all providers failing
-
-This module intentionally isolates all provider-specific logic so core.analyzer
-only calls `run_specialist()` and doesn't need to know provider details.
+This module isolates provider-specific logic from core.analyzer.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import time
-import traceback
 from pathlib import Path
 from typing import Optional
+
 
 def _get_sim_env() -> str:
     return os.environ.get("LLMSIMULATE", "").lower()
@@ -37,16 +34,20 @@ PRINT_PROMPT = _get_print_prompt()
 
 
 def _redact_prompt_for_terminal(prompt: str) -> str:
-    """Strip source payloads from terminal output while preserving the rest of the prompt structure."""
+    """Strip source payloads from terminal output while preserving structure."""
     if not prompt:
         return prompt
 
     source_re = re.compile(
-        r"SOURCE_FILES:\s*.*?(?=\n\s*(?:BEHAVIORAL_SUMMARY|BYTECODE_FINDINGS|RULE_FINDINGS|SPECIALIST_FINDINGS|JUDGE_FINDINGS|[A-Z_]+:)|\Z)",
+        r"SOURCE_FILES:\s*.*?(?=\n\s*(?:BEHAVIORAL_SUMMARY|BYTECODE_FINDINGS|"
+        r"RULE_FINDINGS|SPECIALIST_FINDINGS|JUDGE_FINDINGS|[A-Z_]+:)|\Z)",
         re.S | re.I,
     )
-    placeholder = "SOURCE_FILES: [12,483 chars of source; content redacted in terminal output]"
+    placeholder = (
+        "SOURCE_FILES: [source content redacted in terminal output]"
+    )
     redacted = source_re.sub(placeholder, prompt)
+
     if redacted != prompt:
         return redacted
 
@@ -57,7 +58,7 @@ def _redact_prompt_for_terminal(prompt: str) -> str:
 
 
 def _write_prompt_log(prompt: str, label: str = "prompt") -> str:
-    """Persist the complete prompt to a file for debugging without printing it to stdout."""
+    """Persist the complete prompt to a local debug file."""
     logs_dir = Path("reports") / "llm_debug"
     logs_dir.mkdir(parents=True, exist_ok=True)
     path = logs_dir / f"{label}_{int(time.time() * 1000)}.txt"
@@ -70,331 +71,683 @@ class LLMError(Exception):
 
 
 def _simulate(name: str) -> bool:
-    """Return True if we should simulate a failure for the given provider name."""
+    """Return True when the requested provider failure is simulated."""
     sim = _get_sim_env()
+
     if sim == "all-fail":
         return True
+
     if sim and name and name.lower() in sim:
         return True
+
     return False
 
 
 def _extract_text_from_response(resp) -> Optional[str]:
-    """Return first text content from an Anthropic/AgentRouter response object, or None."""
+    """Extract visible text from common provider response shapes."""
     if isinstance(resp, str):
         text = resp.strip()
         return text or None
 
-    # dict-like
+    # Dict-like responses.
     try:
         if isinstance(resp, dict):
-            # common shapes: {"message": {"content": [...]}} or {"completion": "..."}
             if "completion" in resp:
                 value = resp.get("completion")
                 if isinstance(value, str):
                     return value.strip() or None
+
+            # OpenAI Chat Completions.
+            choices = resp.get("choices")
+            if isinstance(choices, list) and choices:
+                choice = choices[0]
+
+                if isinstance(choice, dict):
+                    message = choice.get("message")
+
+                    if isinstance(message, dict):
+                        content = message.get("content")
+
+                        if isinstance(content, str):
+                            return content.strip() or None
+
+                        if isinstance(content, list):
+                            for item in content:
+                                if isinstance(item, dict):
+                                    value = item.get("text")
+                                    if isinstance(value, str) and value.strip():
+                                        return value.strip()
+
+                    value = choice.get("text")
+                    if isinstance(value, str):
+                        return value.strip() or None
+
             msg = resp.get("message") or resp
+
             if isinstance(msg, dict):
                 content = msg.get("content") or msg.get("text")
+
                 if isinstance(content, list):
                     for item in content:
                         if isinstance(item, dict):
-                            t = item.get("type") or item.get("role")
-                            if t and str(t).lower() == "text":
-                                value = item.get("text") or item.get("content")
+                            item_type = item.get("type")
+
+                            if (
+                                item_type
+                                and str(item_type).lower() == "text"
+                            ):
+                                value = (
+                                    item.get("text")
+                                    or item.get("content")
+                                )
                                 if isinstance(value, str):
                                     return value.strip() or None
-                            if "text" in item:
-                                value = item.get("text")
-                                if isinstance(value, str):
-                                    return value.strip() or None
+
+                            value = item.get("text")
+                            if isinstance(value, str):
+                                return value.strip() or None
+
                 if isinstance(content, str):
                     return content.strip() or None
+
             return None
+
     except Exception:
         pass
 
-    # object-like (SDK Message)
+    # Object-like SDK responses.
     try:
         content = getattr(resp, "content", None)
+
         if isinstance(content, list):
             for block in content:
-                btype = getattr(block, "type", None)
-                if btype and str(btype).lower() == "text":
-                    return getattr(block, "text", None) or getattr(block, "content", None)
-                # some SDK blocks expose 'text' directly
-                txt = getattr(block, "text", None) or getattr(block, "content", None)
-                if isinstance(txt, str):
-                    return txt
-        # fallback: some SDKs put assistant text on resp.message.content
+                block_type = getattr(block, "type", None)
+
+                if (
+                    block_type
+                    and str(block_type).lower() == "text"
+                ):
+                    value = (
+                        getattr(block, "text", None)
+                        or getattr(block, "content", None)
+                    )
+                    if isinstance(value, str):
+                        return value.strip() or None
+
+                value = (
+                    getattr(block, "text", None)
+                    or getattr(block, "content", None)
+                )
+                if isinstance(value, str):
+                    return value.strip() or None
+
         msg = getattr(resp, "message", None)
+
         if msg:
-            content = getattr(msg, "content", None) or (msg.get("content") if isinstance(msg, dict) else None)
-            if isinstance(content, list):
-                for block in content:
+            msg_content = getattr(msg, "content", None)
+
+            if msg_content is None and isinstance(msg, dict):
+                msg_content = msg.get("content")
+
+            if isinstance(msg_content, list):
+                for block in msg_content:
                     if getattr(block, "type", None) == "text":
-                        return getattr(block, "text", None) or getattr(block, "content", None)
+                        value = (
+                            getattr(block, "text", None)
+                            or getattr(block, "content", None)
+                        )
+                        if isinstance(value, str):
+                            return value.strip() or None
+
     except Exception:
         pass
 
     return None
 
 
-def _call_anthropic(prompt: str, model: str = "claude-2", timeout: int = 20) -> str:
-    """Call Anthropic's API. Requires ANTHROPIC_API_KEY in env.
+def _call_anthropic(
+    prompt: str,
+    model: str = "claude-opus-5",
+    timeout: int = 300,
+) -> str:
+    """Call Anthropic's official Messages API."""
 
-    This implementation supports simulation via LLMSIMULATE to avoid using real keys during demos.
-    """
     if _simulate("anthropic"):
         raise LLMError("Simulated Anthropic rate-limit")
 
     key = os.environ.get("ANTHROPIC_API_KEY")
+
     if not key:
         raise LLMError("No Anthropic key")
 
-    # Prefer the official SDK if available; fallback to the Messages HTTP API.
-    try:
-        import anthropic
-        try:
-            client = anthropic.Client(api_key=key)
-            # Messages API style via SDK (if supported)
-            if hasattr(client, "messages"):
-                resp = client.messages.create(model=model, messages=[{"role": "user", "content": prompt}])
-                # SDK response shapes vary; attempt common extraction
-                if isinstance(resp, dict):
-                    return resp.get("message", {}).get("content") or resp.get("completion") or resp.get("text", "")
-                return str(resp)
-            # Older SDKs may expose create_completion
-            if hasattr(client, "create_completion"):
-                resp = client.create_completion(model=model, prompt=prompt, max_tokens=800, temperature=0.0)
-                if isinstance(resp, dict):
-                    return resp.get("completion") or resp.get("text") or ""
-                return str(resp)
-        except Exception:
-            # Fall through to HTTP fallback
-            pass
-    except Exception:
-        # SDK not available — HTTP fallback will be used
-        pass
+    import requests
 
-    # HTTP messages API fallback (current Messages endpoint)
     url = "https://api.anthropic.com/v1/messages"
+
     headers = {
         "x-api-key": key,
-        "Anthropic-Version": os.environ.get("ANTHROPIC_VERSION", "2023-06-01"),
-        "Content-Type": "application/json",
+        "anthropic-version": os.environ.get(
+            "ANTHROPIC_VERSION",
+            "2023-06-01",
+        ),
+        "content-type": "application/json",
     }
-    payload = {"model": model, "messages": [{"role": "user", "content": prompt}], "max_tokens": 800}
+
+    payload = {
+        "model": model,
+        "messages": [
+            {
+                "role": "user",
+                "content": prompt,
+            }
+        ],
+        "max_tokens": 40000,
+    }
+
     try:
-        import requests
+        response = requests.post(
+            url,
+            headers=headers,
+            json=payload,
+            timeout=timeout,
+        )
 
-        r = requests.post(url, headers=headers, json=payload, timeout=timeout)
-        if r.status_code == 429:
+        if response.status_code == 429:
             raise LLMError("Anthropic rate-limited")
-        if 500 <= r.status_code < 600:
-            raise LLMError(f"Anthropic server error: {r.status_code}")
-        r.raise_for_status()
-        data = r.json()
-        if isinstance(data, dict):
-            if "message" in data and isinstance(data["message"], dict):
-                return data["message"].get("content") or data["message"].get("text") or ""
-            return data.get("completion") or data.get("text") or data.get("output", "")
-        return str(data)
-    except Exception as e:
-        raise LLMError(f"Anthropic call failed: {e}")
+
+        if response.status_code in (401, 403):
+            raise LLMError(
+                f"Anthropic authentication failed: "
+                f"HTTP {response.status_code}: "
+                f"{response.text[:500]}"
+            )
+
+        if response.status_code >= 500:
+            raise LLMError(
+                f"Anthropic server error: "
+                f"HTTP {response.status_code}"
+            )
+
+        response.raise_for_status()
+
+        data = response.json()
+        text = _extract_text_from_response(data)
+
+        if text:
+            return text
+
+        raise LLMError(
+            "Anthropic returned no visible text"
+        )
+
+    except LLMError:
+        raise
+    except requests.Timeout:
+        raise LLMError(
+            f"Anthropic request timed out after {timeout}s"
+        )
+    except requests.RequestException as exc:
+        raise LLMError(
+            f"Anthropic HTTP failure: "
+            f"[{type(exc).__name__}] {exc}"
+        )
+    except Exception as exc:
+        raise LLMError(
+            f"Anthropic response parsing failed: "
+            f"[{type(exc).__name__}] {exc!r}"
+        )
 
 
-def _call_agentrouter(prompt: str, model: str = "anthropic/claude-2", timeout: int = 20) -> str:
+def _call_agentrouter(
+    prompt: str,
+    model: str = "deepseek-v4-flash",
+    timeout: int = 600,
+) -> str:
+    """
+    Call AgentRouter using the correct protocol.
+
+    Claude:
+        AgentRouter Anthropic-compatible Messages API.
+
+    DeepSeek / GLM / GPT:
+        AgentRouter OpenAI-compatible Chat Completions API.
+
+    Direct requests are used instead of the Anthropic SDK for AgentRouter
+    to avoid protocol/SDK mismatches.
+    """
+
     if _simulate("agentrouter"):
         raise LLMError("Simulated AgentRouter rate-limit")
 
     key = os.environ.get("AGENTROUTER_API_KEY")
+
     if not key:
         raise LLMError("No AgentRouter key")
 
-    # AgentRouter generic proxy pattern (customers may have different endpoints).
-    # We attempt /v1/models to discover available models if present.
-    # Default to the official AgentRouter Anthropic-compatible endpoint
-    base = os.environ.get("AGENTROUTER_URL", "https://agentrouter.org")
+    import requests
 
-    # Ensure SDK availability is distinguished from runtime responses.
-    try:
-        from anthropic import Anthropic
-    except Exception as e:
-        raise LLMError(f"AgentRouter SDK unavailable: {e}")
+    model_lower = model.lower().strip()
 
-    try:
-        client = Anthropic(auth_token=key, base_url=base)
+    # ================================================================
+    # CLAUDE -> AGENTROUTER ANTHROPIC-COMPATIBLE API
+    # ================================================================
+    if model_lower.startswith("claude"):
+        base = os.environ.get(
+            "AGENTROUTER_ANTHROPIC_URL",
+            "https://co.agentrouter.org",
+        ).rstrip("/")
 
-        def _run_streaming(max_tokens: int) -> str:
-            # Long, multi-category prompts (like the 7-category token-risk
-            # specialist) can genuinely take the model past the SDK's 10-minute
-            # non-streaming estimate. Streaming is the correct fix, not a
-            # workaround — raising max_tokens on a non-streaming call only
-            # makes that estimate worse, since duration scales with the
-            # requested budget.
-            with client.messages.stream(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=max_tokens,
-            ) as stream:
-                # Iterate the RAW stream (every event), not just text_stream.
-                # If a response is thinking-only with zero text content blocks,
-                # text_stream yields nothing and returns immediately without
-                # ever processing the stream's message_stop event — so the
-                # SDK's internal final-message snapshot never gets built, and
-                # get_final_message() then raises a bare AssertionError instead
-                # of a clean error. Iterating the full event stream guarantees
-                # the snapshot is always built, text or no text.
-                for _ in stream:
-                    pass
-                try:
-                    final_message = stream.get_final_message()
-                except AssertionError:
-                    # Belt-and-suspenders: even after full iteration, if the
-                    # snapshot still wasn't built (fully thinking-only
-                    # response), treat it as "no text" rather than crashing —
-                    # this is the same failure class as our existing
-                    # thinking-only-response handling below.
-                    return ""
-            return _extract_text_from_response(final_message)
+        url = f"{base}/v1/messages"
 
-        prompt_len = len(prompt)
-        print(f"    [LLM CLIENT] Prompt length: {prompt_len} chars (~{prompt_len // 4} tokens est.)")
+        headers = {
+            "x-api-key": key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
 
-        # Primary attempt with a modest budget
-        text = _run_streaming(50000)
-        if text:
-            return text
+        payload = {
+            "model": model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+            "max_tokens": 40000,
+        }
 
-        # If no visible assistant text, retry with a larger budget. Now that
-        # calls are streamed, there's no artificial ceiling forcing this to
-        # stay low — a very long/large-source prompt can genuinely need more
-        # room to think before producing visible text, so go meaningfully
-        # higher on the retry rather than a small bump.
-        print(f"    [LLM CLIENT] First attempt (40000) produced no visible text for a {prompt_len}-char prompt; retrying with a larger budget")
-        text2 = _run_streaming(80000)
-        if text2:
-            return text2
-
-        # Distinct error for thinking-only responses so caller can decide behavior
-        raise LLMError(f"AgentRouter returned thinking-only response with no text (prompt was {prompt_len} chars)")
-    except LLMError:
-        # propagate our intentional LLMError cases
-        raise
-    except Exception as e:
-        # Wrap other runtime failures (auth, network, server errors).
-        # A bare AssertionError() with no message and no delay usually
-        # means something failed at connection/setup time, before any
-        # real model call happened — the full traceback pinpoints
-        # exactly which line inside our code or the SDK raised it.
-        tb = traceback.format_exc()
-        raise LLMError(
-            f"AgentRouter call failed: [{type(e).__name__}] {e!r}\n{tb}"
+        print(
+            f"    [LLM CLIENT] AgentRouter Anthropic request: "
+            f"model={model}, prompt={len(prompt)} chars"
         )
+
+        try:
+            response = requests.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=timeout,
+            )
+
+            if response.status_code == 429:
+                raise LLMError(
+                    "AgentRouter Anthropic rate-limited"
+                )
+
+            if response.status_code in (401, 403):
+                raise LLMError(
+                    f"AgentRouter Anthropic authentication failed: "
+                    f"HTTP {response.status_code}: "
+                    f"{response.text[:500]}"
+                )
+
+            if response.status_code >= 500:
+                raise LLMError(
+                    f"AgentRouter Anthropic server error: "
+                    f"HTTP {response.status_code}"
+                )
+
+            response.raise_for_status()
+
+            data = response.json()
+            text = _extract_text_from_response(data)
+
+            if text:
+                return text
+
+            raise LLMError(
+                "AgentRouter Anthropic returned no visible text"
+            )
+
+        except LLMError:
+            raise
+        except requests.Timeout:
+            raise LLMError(
+                f"AgentRouter Anthropic request timed out "
+                f"after {timeout}s"
+            )
+        except requests.RequestException as exc:
+            raise LLMError(
+                f"AgentRouter Anthropic HTTP failure: "
+                f"[{type(exc).__name__}] {exc}"
+            )
+        except Exception as exc:
+            raise LLMError(
+                f"AgentRouter Anthropic response parsing failed: "
+                f"[{type(exc).__name__}] {exc!r}"
+            )
+
+    # ================================================================
+    # DEEPSEEK / GLM / GPT -> OPENAI-COMPATIBLE API
+    # ================================================================
+    base = os.environ.get(
+        "AGENTROUTER_OPENAI_URL",
+        "https://co.agentrouter.org/v1",
+    ).rstrip("/")
+
+    url = f"{base}/chat/completions"
+
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+    }
+
+    prompt_len = len(prompt)
+
+    print(
+        f"    [LLM CLIENT] AgentRouter OpenAI-compatible request: "
+        f"model={model}, prompt={prompt_len} chars "
+        f"(~{prompt_len // 4} tokens est.)"
+    )
+
+    def _request(max_tokens: int) -> str:
+        payload = {
+            "model": model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+            "max_tokens": max_tokens,
+            "temperature": 0,
+        }
+
+        try:
+            response = requests.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=timeout,
+            )
+
+            if response.status_code == 429:
+                raise LLMError(
+                    "AgentRouter OpenAI-compatible rate-limited"
+                )
+
+            if response.status_code in (401, 403):
+                raise LLMError(
+                    f"AgentRouter authentication failed: "
+                    f"HTTP {response.status_code}: "
+                    f"{response.text[:500]}"
+                )
+
+            if response.status_code == 404:
+                raise LLMError(
+                    f"AgentRouter endpoint/model not found: "
+                    f"HTTP 404: {response.text[:1000]}"
+                )
+
+            if response.status_code >= 500:
+                raise LLMError(
+                    f"AgentRouter server error: "
+                    f"HTTP {response.status_code}: "
+                    f"{response.text[:500]}"
+                )
+
+            response.raise_for_status()
+
+            data = response.json()
+            text = _extract_text_from_response(data)
+
+            if text:
+                return text
+
+            print(
+                "    [LLM CLIENT] AgentRouter returned no visible text."
+            )
+            print(
+                "    [LLM CLIENT] Response preview: "
+                f"{json.dumps(data, ensure_ascii=False)[:1500]}"
+            )
+
+            return ""
+
+        except LLMError:
+            raise
+        except requests.Timeout:
+            raise LLMError(
+                f"AgentRouter request timed out after {timeout}s"
+            )
+        except requests.RequestException as exc:
+            raise LLMError(
+                f"AgentRouter HTTP failure: "
+                f"[{type(exc).__name__}] {exc}"
+            )
+        except Exception as exc:
+            raise LLMError(
+                f"AgentRouter response parsing failed: "
+                f"[{type(exc).__name__}] {exc!r}"
+            )
+
+    # First attempt.
+    text = _request(40000)
+
+    if text:
+        return text
+
+    # Retry only after a genuine empty response.
+    print(
+        f"    [LLM CLIENT] AgentRouter returned empty visible text "
+        f"for {prompt_len}-char prompt; retrying with 80000 tokens"
+    )
+
+    text = _request(80000)
+
+    if text:
+        return text
+
+    raise LLMError(
+        f"AgentRouter returned no visible text "
+        f"(model={model}, prompt={prompt_len} chars)"
+    )
 
 
 def _is_simulation_active() -> bool:
-    """Return True when LLMSIMULATE is explicitly set to a mock/failure mode."""
-    return bool(SIM)
+    return bool(_get_sim_env())
 
 
 def _is_mock_response(result: dict) -> bool:
-    """Explicitly reject simulated/mock outputs; do not infer from response text alone."""
+    """Reject simulated/mock outputs."""
     if not isinstance(result, dict):
         return True
+
     if result.get("_simulated") is True:
         return True
+
     sim = _get_sim_env()
-    if (result.get("backend") or "").lower() == "agentrouter" and sim and "agentrouter-canned" in sim:
-        return True
+
+    if (
+        result.get("backend") or ""
+    ).lower() == "agentrouter" and sim:
+        if "agentrouter-canned" in sim:
+            return True
+
     return False
 
 
 def _successful_llm_result(result: dict) -> bool:
-    """Only true for a real provider response that produced actual text."""
+    """True only for a real provider response containing text."""
     if not isinstance(result, dict):
         return False
+
     if result.get("_simulated") is True:
         return False
+
     backend = (result.get("backend") or "").strip()
     response = (result.get("response") or "").strip()
     error = (result.get("error") or "").strip()
+
     if backend in ("", "none"):
         return False
+
     if not response:
         return False
+
     if error:
         return False
+
     return True
 
 
-def run_specialist(specialist_id: str, prompt: str, *, timeout: int = 30) -> dict:
-    """Run a single specialist prompt through the tiered client.
-
-    Returns a dict: {backend: str, provider: str, model: str, response: str, error: Optional[str], _simulated: bool}
+def run_specialist(
+    specialist_id: str,
+    prompt: str,
+    *,
+    timeout: int = 600,
+) -> dict:
     """
+    Run a specialist prompt through the tiered client.
+
+    Returns:
+        {
+            backend: str,
+            provider: str,
+            model: str,
+            response: str,
+            error: Optional[str],
+            _simulated: bool,
+        }
+    """
+
     if _get_print_prompt():
         redacted_prompt = _redact_prompt_for_terminal(prompt)
-        log_path = _write_prompt_log(prompt, label=f"specialist_{specialist_id}")
+        log_path = _write_prompt_log(
+            prompt,
+            label=f"specialist_{specialist_id}",
+        )
+
         print("[LLM CLIENT] --- Sending specialist prompt ---")
         print(redacted_prompt)
-        print(f"[LLM CLIENT] --- End prompt (full prompt logged to {log_path}) ---")
+        print(
+            "[LLM CLIENT] --- End prompt "
+            f"(full prompt logged to {log_path}) ---"
+        )
 
     err = ""
 
+    # ================================================================
+    # DIRECT ANTHROPIC
+    # ================================================================
     if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("[LLM CLIENT] INFO: ANTHROPIC_API_KEY not set; skipping direct Anthropic")
+        print(
+            "[LLM CLIENT] INFO: ANTHROPIC_API_KEY not set; "
+            "skipping direct Anthropic"
+        )
     else:
         model_name = "claude-opus-5"
-        print(f"[LLM] Trying Anthropic ({model_name})...")
-        try:
-            resp = _call_anthropic(prompt, model=model_name, timeout=timeout)
-            text = resp if isinstance(resp, str) else _extract_text_from_response(resp)
-            if text:
-                print(f"[LLM] Trying Anthropic ({model_name})... success")
-                return {"backend": "anthropic", "provider": "anthropic", "model": model_name, "response": text, "error": None, "_simulated": False}
-            raise LLMError("Anthropic returned thinking-only response with no text")
-        except LLMError as e:
-            msg = str(e)
-            err = err + "; " + msg if err else msg
-            print(f"[LLM] Trying Anthropic ({model_name})... failed: {msg}")
-            if any(t in msg.lower() for t in ("401", "unauthor", "invalid", "authentication", "invalid x-api-key")):
-                print("[LLM CLIENT] WARNING: Anthropic authentication failed; skipping Anthropic tier")
-            else:
-                print(f"[LLM CLIENT] INFO: Anthropic transient failure: {msg}; falling back")
 
+        print(
+            f"[LLM] Trying Anthropic ({model_name})..."
+        )
+
+        try:
+            text = _call_anthropic(
+                prompt,
+                model=model_name,
+                timeout=timeout,
+            )
+
+            if text:
+                print(
+                    f"[LLM] Trying Anthropic ({model_name})... success"
+                )
+
+                return {
+                    "backend": "anthropic",
+                    "provider": "anthropic",
+                    "model": model_name,
+                    "response": text,
+                    "error": None,
+                    "_simulated": False,
+                }
+
+            raise LLMError(
+                "Anthropic returned no visible text"
+            )
+
+        except LLMError as exc:
+            msg = str(exc)
+            err = f"{err}; {msg}" if err else msg
+
+            print(
+                f"[LLM] Trying Anthropic ({model_name})... "
+                f"failed: {msg}"
+            )
+
+            if any(
+                token in msg.lower()
+                for token in (
+                    "401",
+                    "unauthor",
+                    "invalid",
+                    "authentication",
+                    "invalid x-api-key",
+                )
+            ):
+                print(
+                    "[LLM CLIENT] WARNING: Anthropic authentication "
+                    "failed; skipping Anthropic tier"
+                )
+            else:
+                print(
+                    f"[LLM CLIENT] INFO: Anthropic transient failure: "
+                    f"{msg}; falling back"
+                )
+
+    # ================================================================
+    # SIMULATED AGENTROUTER
+    # ================================================================
     sim = _get_sim_env()
+
     if sim and "agentrouter-canned" in sim:
         return {
             "backend": "agentrouter",
             "provider": "agentrouter",
             "model": "agentrouter-canned",
-            "response": "[SIMULATED AgentRouter response] Detailed analysis: ...",
+            "response": (
+                "[SIMULATED AgentRouter response] "
+                "Detailed analysis: ..."
+            ),
             "error": None,
             "_simulated": True,
         }
 
+    # ================================================================
+    # AGENTROUTER SPECIALIST MODELS
+    # ================================================================
     if not os.environ.get("AGENTROUTER_API_KEY"):
-        print("[LLM CLIENT] INFO: AGENTROUTER_API_KEY not set; skipping AgentRouter")
+        print(
+            "[LLM CLIENT] INFO: AGENTROUTER_API_KEY not set; "
+            "skipping AgentRouter"
+        )
     else:
         for model_name in (
-            # These three are intentionally disabled for the current AgentRouter budget pool.
-            # They are known to hit quota exhaustion on this account; if the pool is topped up later,
-            # re-enable them by uncommenting these lines and preserving the original order.
-            # "claude-opus-5",
-            # "claude-opus-4-8",
-            # "gpt-5.6-sol",
             "deepseek-v4-flash",
             "glm-5.3",
         ):
-            print(f"[LLM] Trying AgentRouter ({model_name})...")
+            print(
+                f"[LLM] Trying AgentRouter ({model_name})..."
+            )
+
             try:
-                resp = _call_agentrouter(prompt, model=model_name, timeout=timeout)
-                text = resp if isinstance(resp, str) else _extract_text_from_response(resp)
+                text = _call_agentrouter(
+                    prompt,
+                    model=model_name,
+                    timeout=timeout,
+                )
+
                 if not text:
-                    raise LLMError("AgentRouter returned thinking-only response with no text")
-                print(f"[LLM] Trying AgentRouter ({model_name})... success")
+                    raise LLMError(
+                        "AgentRouter returned no visible text"
+                    )
+
+                print(
+                    f"[LLM] Trying AgentRouter ({model_name})... "
+                    "success"
+                )
+
                 return {
                     "backend": "agentrouter",
                     "provider": "agentrouter",
@@ -403,24 +756,69 @@ def run_specialist(specialist_id: str, prompt: str, *, timeout: int = 30) -> dic
                     "error": None,
                     "_simulated": False,
                 }
-            except LLMError as e:
-                msg = str(e)
-                err = err + "; " + msg if err else msg
-                print(f"[LLM] Trying AgentRouter ({model_name})... failed: {msg}")
-                if any(t in msg.lower() for t in ("401", "unauthor", "invalid", "authentication", "unauthorized client")):
-                    print(f"[LLM CLIENT] WARNING: AgentRouter authentication failed for model {model_name}; skipping AgentRouter tier")
+
+            except LLMError as exc:
+                msg = str(exc)
+                err = f"{err}; {msg}" if err else msg
+
+                print(
+                    f"[LLM] Trying AgentRouter ({model_name})... "
+                    f"failed: {msg}"
+                )
+
+                if any(
+                    token in msg.lower()
+                    for token in (
+                        "401",
+                        "unauthor",
+                        "invalid",
+                        "authentication",
+                        "unauthorized client",
+                    )
+                ):
+                    print(
+                        "[LLM CLIENT] WARNING: AgentRouter "
+                        f"authentication failed for model "
+                        f"{model_name}; skipping AgentRouter tier"
+                    )
                     break
-                print(f"[LLM CLIENT] INFO: AgentRouter model {model_name} failed transiently: {msg}; trying next model")
 
-    print("[LLM CLIENT] WARNING: No LLM backends available; producing rule-only report")
-    return {"backend": "none", "provider": "none", "model": "", "response": "", "error": err, "_simulated": bool(_get_sim_env())}
+                print(
+                    "[LLM CLIENT] INFO: AgentRouter model "
+                    f"{model_name} failed transiently: {msg}; "
+                    "trying next model"
+                )
+
+    print(
+        "[LLM CLIENT] WARNING: No LLM backends available; "
+        "producing rule-only report"
+    )
+
+    return {
+        "backend": "none",
+        "provider": "none",
+        "model": "",
+        "response": "",
+        "error": err,
+        "_simulated": bool(_get_sim_env()),
+    }
 
 
-def run_judge(rule_findings: dict, specialist_findings: str, *, address: str = "", chain: str = "ethereum", provider: str | None = None, model: str | None = None) -> dict:
-    """Run the final judge pass after a real specialist response arrives."""
+def run_judge(
+    rule_findings: dict,
+    specialist_findings: str,
+    *,
+    address: str = "",
+    chain: str = "ethereum",
+    provider: str | None = None,
+    model: str | None = None,
+) -> dict:
+    """Run the final judge pass after a real specialist response."""
+
     judge_prompt = (
         "You are the final judge for a smart-contract risk analysis. "
-        "Your task is to assess the rule-based findings and the specialist findings, then return a JSON object with: "
+        "Your task is to assess the rule-based findings and the "
+        "specialist findings, then return a JSON object with: "
         "verdict, severity, and reason. Output only valid JSON.\n\n"
         f"Address: {address}\n"
         f"Chain: {chain}\n\n"
@@ -432,54 +830,141 @@ def run_judge(rule_findings: dict, specialist_findings: str, *, address: str = "
 
     if _get_print_prompt():
         redacted_prompt = _redact_prompt_for_terminal(judge_prompt)
-        log_path = _write_prompt_log(judge_prompt, label="judge")
+        log_path = _write_prompt_log(
+            judge_prompt,
+            label="judge",
+        )
+
         print("[LLM CLIENT] --- Sending judge prompt ---")
         print(redacted_prompt)
-        print(f"[LLM CLIENT] --- End judge prompt (full prompt logged to {log_path}) ---")
+        print(
+            "[LLM CLIENT] --- End prompt "
+            f"(full prompt logged to {log_path}) ---"
+        )
 
     err = ""
+
     provider = (provider or "").strip().lower()
     model = (model or "").strip()
 
+    # ================================================================
+    # USE THE SAME REAL BACKEND/MODEL AS SPECIALIST
+    # ================================================================
     if provider and model:
-        display_name = provider.title() if provider != "agentrouter" else "AgentRouter"
-        print(f"[JUDGE] Using {display_name} ({model}) — same backend/model as specialist")
+        display_name = (
+            "AgentRouter"
+            if provider == "agentrouter"
+            else provider.title()
+        )
+
+        print(
+            f"[JUDGE] Using {display_name} ({model}) — "
+            "same backend/model as specialist"
+        )
+
         try:
             if provider == "anthropic":
-                resp = _call_anthropic(judge_prompt, model=model, timeout=30)
+                text = _call_anthropic(
+                    judge_prompt,
+                    model=model,
+                    timeout=300,
+                )
+
             elif provider == "agentrouter":
-                resp = _call_agentrouter(judge_prompt, model=model, timeout=30)
+                text = _call_agentrouter(
+                    judge_prompt,
+                    model=model,
+                    timeout=300,
+                )
+
             else:
-                raise LLMError(f"Unsupported provider for judge: {provider}")
-            text = resp if isinstance(resp, str) else _extract_text_from_response(resp)
+                raise LLMError(
+                    f"Unsupported provider for judge: {provider}"
+                )
+
             if text:
                 parsed = _parse_judge_response(text)
+
                 if parsed:
                     print("[JUDGE] Response received")
-                    return {**parsed, "backend": provider, "provider": provider, "model": model, "error": None, "_simulated": False}
-            raise LLMError("Judge returned no text or invalid JSON")
-        except LLMError as e:
-            err = str(e)
-            print(f"[JUDGE] Failed with: {err}")
-            print("[LLM CLIENT] WARNING: Judge pass failed; falling back to rule-based verdict")
-            return {"backend": "none", "provider": provider, "model": model, "verdict": "", "severity": "", "reason": "", "error": err, "_simulated": bool(_get_sim_env())}
 
+                    return {
+                        **parsed,
+                        "backend": provider,
+                        "provider": provider,
+                        "model": model,
+                        "error": None,
+                        "_simulated": False,
+                    }
+
+            raise LLMError(
+                "Judge returned no text or invalid JSON"
+            )
+
+        except LLMError as exc:
+            err = str(exc)
+
+            print(
+                f"[JUDGE] Failed with: {err}"
+            )
+            print(
+                "[LLM CLIENT] WARNING: Judge pass failed; "
+                "falling back to rule-based verdict"
+            )
+
+            return {
+                "backend": "none",
+                "provider": provider,
+                "model": model,
+                "verdict": "",
+                "severity": "",
+                "reason": "",
+                "error": err,
+                "_simulated": bool(_get_sim_env()),
+            }
+
+    # ================================================================
+    # FALLBACK JUDGE: DIRECT ANTHROPIC
+    # ================================================================
     if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("[LLM CLIENT] INFO: ANTHROPIC_API_KEY not set; skipping judge via Anthropic")
+        print(
+            "[LLM CLIENT] INFO: ANTHROPIC_API_KEY not set; "
+            "skipping judge via Anthropic"
+        )
     else:
         model_name = "claude-opus-5"
+
         try:
-            resp = _call_anthropic(judge_prompt, model=model_name, timeout=30)
-            text = resp if isinstance(resp, str) else _extract_text_from_response(resp)
+            text = _call_anthropic(
+                judge_prompt,
+                model=model_name,
+                timeout=300,
+            )
+
             if text:
                 parsed = _parse_judge_response(text)
-                if parsed:
-                    return {**parsed, "backend": "anthropic", "provider": "anthropic", "model": model_name, "error": None, "_simulated": False}
-        except LLMError as e:
-            err = str(e)
 
+                if parsed:
+                    return {
+                        **parsed,
+                        "backend": "anthropic",
+                        "provider": "anthropic",
+                        "model": model_name,
+                        "error": None,
+                        "_simulated": False,
+                    }
+
+        except LLMError as exc:
+            err = str(exc)
+
+    # ================================================================
+    # FALLBACK JUDGE: AGENTROUTER
+    # ================================================================
     if not os.environ.get("AGENTROUTER_API_KEY"):
-        print("[LLM CLIENT] INFO: AGENTROUTER_API_KEY not set; skipping judge via AgentRouter")
+        print(
+            "[LLM CLIENT] INFO: AGENTROUTER_API_KEY not set; "
+            "skipping judge via AgentRouter"
+        )
     else:
         for model_name in (
             "claude-opus-5",
@@ -489,16 +974,33 @@ def run_judge(rule_findings: dict, specialist_findings: str, *, address: str = "
             "glm-5.3",
         ):
             try:
-                resp = _call_agentrouter(judge_prompt, model=model_name, timeout=30)
-                text = resp if isinstance(resp, str) else _extract_text_from_response(resp)
+                text = _call_agentrouter(
+                    judge_prompt,
+                    model=model_name,
+                    timeout=300,
+                )
+
                 if text:
                     parsed = _parse_judge_response(text)
-                    if parsed:
-                        return {**parsed, "backend": "agentrouter", "provider": "agentrouter", "model": model_name, "error": None, "_simulated": False}
-            except LLMError as e:
-                err = str(e)
 
-    print("[LLM CLIENT] WARNING: Judge pass failed; falling back to rule-based verdict")
+                    if parsed:
+                        return {
+                            **parsed,
+                            "backend": "agentrouter",
+                            "provider": "agentrouter",
+                            "model": model_name,
+                            "error": None,
+                            "_simulated": False,
+                        }
+
+            except LLMError as exc:
+                err = str(exc)
+
+    print(
+        "[LLM CLIENT] WARNING: Judge pass failed; "
+        "falling back to rule-based verdict"
+    )
+
     return {
         "backend": "none",
         "provider": provider or "none",
@@ -512,35 +1014,73 @@ def run_judge(rule_findings: dict, specialist_findings: str, *, address: str = "
 
 
 def _parse_judge_response(text: str) -> Optional[dict]:
-    """Parse a JSON or key-value judge response into verdict/severity/reason."""
+    """Parse JSON or key-value judge response."""
+
     if not text:
         return None
+
     candidate = text.strip()
+
     if candidate.startswith("```"):
         candidate = candidate.strip("`\n ")
+
         if candidate.lower().startswith("json"):
             candidate = candidate[4:].strip()
+
     try:
-        import json
         payload = json.loads(candidate)
+
         if isinstance(payload, dict):
-            verdict = str(payload.get("verdict", "")).strip().lower()
-            severity = str(payload.get("severity", "")).strip().lower()
-            reason = str(payload.get("reason") or payload.get("explanation") or "").strip()
+            verdict = str(
+                payload.get("verdict", "")
+            ).strip().lower()
+
+            severity = str(
+                payload.get("severity", "")
+            ).strip().lower()
+
+            reason = str(
+                payload.get("reason")
+                or payload.get("explanation")
+                or ""
+            ).strip()
+
             if verdict and reason:
-                return {"verdict": verdict, "severity": severity, "reason": reason}
+                return {
+                    "verdict": verdict,
+                    "severity": severity,
+                    "reason": reason,
+                }
+
     except Exception:
         pass
 
     for key in ("verdict", "decision"):
         if f"{key}:" in candidate.lower():
             try:
-                value = candidate.split(key, 1)[1].splitlines()[0].strip()
+                value = (
+                    candidate
+                    .split(key, 1)[1]
+                    .splitlines()[0]
+                    .strip()
+                )
+
                 if value:
-                    return {"verdict": value.lower(), "severity": "", "reason": candidate.strip()[:200]}
+                    return {
+                        "verdict": value.lower(),
+                        "severity": "",
+                        "reason": candidate.strip()[:200],
+                    }
+
             except Exception:
                 pass
+
     return None
 
 
-__all__ = ["run_specialist", "run_judge", "_successful_llm_result", "_is_mock_response"]
+__all__ = [
+    "run_specialist",
+    "run_judge",
+    "_successful_llm_result",
+    "_is_mock_response",
+]
