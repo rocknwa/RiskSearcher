@@ -263,7 +263,7 @@ def _call_agentrouter(prompt: str, model: str = "anthropic/claude-2", timeout: i
         print(f"    [LLM CLIENT] Prompt length: {prompt_len} chars (~{prompt_len // 4} tokens est.)")
 
         # Primary attempt with a modest budget
-        text = _run_streaming(40000)
+        text = _run_streaming(50000)
         if text:
             return text
 
