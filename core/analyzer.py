@@ -14,6 +14,7 @@ Pipeline:
 
 import os
 from dataclasses import dataclass, asdict
+from typing import Callable
 
 from rpc.provider import get_contract_context, get_transfer_history, get_source_code
 from core.rules import scan_bytecode, scan_source
@@ -139,21 +140,40 @@ class AnalysisResult:
         return "\n".join(lines)
 
 
-def analyze(address: str, ticket_meta: dict = None, chain: str | None = "ethereum") -> AnalysisResult:
-    """Full analysis pipeline for a single contract address."""
+def analyze(
+    address: str,
+    ticket_meta: dict = None,
+    chain: str | None = "ethereum",
+    on_progress: Callable[[str], None] | None = None,
+) -> AnalysisResult:
+    """Full analysis pipeline for a single contract address.
 
-    print("[1/5] Fetching contract source...")
+    on_progress, if given, is called with each stage-marker string in
+    addition to the normal print() — this is how the API/SSE server streams
+    live progress to the frontend without changing any pipeline logic.
+    The CLI (main.py) doesn't pass this, so its behavior is unchanged.
+    """
+
+    def _emit(msg: str) -> None:
+        print(msg)
+        if on_progress:
+            try:
+                on_progress(msg)
+            except Exception:
+                pass  # never let a UI callback break the actual analysis
+
+    _emit("[1/5] Fetching contract source...")
     src = get_source_code(address, chain=chain)
     source_verified = src["verified"]
     source_code = src["source_code"]
     contract_name = src.get("contract_name", "")
 
     if source_verified:
-        print(f"    [SOURCE] Verified: {contract_name}")
+        _emit(f"    [SOURCE] Verified: {contract_name}")
     else:
-        print(f"    [SOURCE] Unverified — bytecode only")
+        _emit(f"    [SOURCE] Unverified — bytecode only")
 
-    print("[2/5] Running rule-based analysis...")
+    _emit("[2/5] Running rule-based analysis...")
     rpc_ctx = get_contract_context(address, chain=chain)
 
     transfers = get_transfer_history(address, limit=200, chain=chain)
@@ -294,7 +314,7 @@ def analyze(address: str, ticket_meta: dict = None, chain: str | None = "ethereu
     token_risk_prompt += "\nBEHAVIORAL_SUMMARY:\n"
     token_risk_prompt += tx_analysis.get("summary", "")[:2000]
 
-    print("[3/5] Running specialist analysis...")
+    _emit("[3/5] Running specialist analysis...")
     try:
         specialist_result = run_specialist("token_risk", token_risk_prompt)
     except Exception as exc:
@@ -309,14 +329,14 @@ def analyze(address: str, ticket_meta: dict = None, chain: str | None = "ethereu
                 specialist_success = True
 
     if specialist_success:
-        print("    [LLM] Specialist: returned usable response")
+        _emit("    [LLM] Specialist: returned usable response")
     else:
-        print("    [LLM] Specialist: no usable response; continuing with rule-based verdict")
+        _emit("    [LLM] Specialist: no usable response; continuing with rule-based verdict")
 
     # Explicit verdict branch: specialist success -> judge pass; otherwise pure rule fallback
     judge_result = {"verdict": "", "severity": "", "reason": "", "error": "", "backend": "none"}
     if specialist_success:
-        print("[4/5] Running judge pass...")
+        _emit("[4/5] Running judge pass...")
         try:
             judge_result = run_judge(
                 rule_findings=scoring,
@@ -339,7 +359,7 @@ def analyze(address: str, ticket_meta: dict = None, chain: str | None = "ethereu
                 final_score = _severity_to_score(final_severity)
             score_source = "llm_judge"
             verdict_source = "llm_judge"
-            print("    [LLM] Judge: returned final verdict/severity/reason")
+            _emit("    [LLM] Judge: returned final verdict/severity/reason")
         else:
             final_verdict = scoring["verdict"]
             final_severity = scoring["severity"]
@@ -348,7 +368,7 @@ def analyze(address: str, ticket_meta: dict = None, chain: str | None = "ethereu
             score_source = "rule_based"
             verdict_source = "rule_based"
             judge_error = judge_result.get("error") or "judge returned an invalid or empty response"
-            print(f"    [LLM] Judge: failed ({judge_error}); retaining rule-based verdict")
+            _emit(f"    [LLM] Judge: failed ({judge_error}); retaining rule-based verdict")
     else:
         final_verdict = scoring["verdict"]
         final_severity = scoring["severity"]
@@ -358,7 +378,7 @@ def analyze(address: str, ticket_meta: dict = None, chain: str | None = "ethereu
         verdict_source = "rule_based"
         judge_error = "no real specialist response reached the judge"
 
-    print("[5/5] Generating report...")
+    _emit("[5/5] Generating report...")
     llm_report = analyze_contract(
         address=address,
         bytecode_size=rpc_ctx.get("bytecode_size", 0),
