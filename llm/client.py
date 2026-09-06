@@ -259,19 +259,26 @@ def _call_agentrouter(prompt: str, model: str = "anthropic/claude-2", timeout: i
                     return ""
             return _extract_text_from_response(final_message)
 
+        prompt_len = len(prompt)
+        print(f"    [LLM CLIENT] Prompt length: {prompt_len} chars (~{prompt_len // 4} tokens est.)")
+
         # Primary attempt with a modest budget
         text = _run_streaming(40000)
         if text:
             return text
 
-        # If no visible assistant text, retry with a larger budget required by full-size prompts.
-        # DeepSeek/GLM have required 16000 for FARTPEPE-sized prompts in practice.
-        text2 = _run_streaming(50000)
+        # If no visible assistant text, retry with a larger budget. Now that
+        # calls are streamed, there's no artificial ceiling forcing this to
+        # stay low — a very long/large-source prompt can genuinely need more
+        # room to think before producing visible text, so go meaningfully
+        # higher on the retry rather than a small bump.
+        print(f"    [LLM CLIENT] First attempt (40000) produced no visible text for a {prompt_len}-char prompt; retrying with a larger budget")
+        text2 = _run_streaming(80000)
         if text2:
             return text2
 
         # Distinct error for thinking-only responses so caller can decide behavior
-        raise LLMError("AgentRouter returned thinking-only response with no text")
+        raise LLMError(f"AgentRouter returned thinking-only response with no text (prompt was {prompt_len} chars)")
     except LLMError:
         # propagate our intentional LLMError cases
         raise
