@@ -238,9 +238,25 @@ def _call_agentrouter(prompt: str, model: str = "anthropic/claude-2", timeout: i
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=max_tokens,
             ) as stream:
-                for _ in stream.text_stream:
-                    pass  # accumulation happens in get_final_message(); iterate to drive the stream
-                final_message = stream.get_final_message()
+                # Iterate the RAW stream (every event), not just text_stream.
+                # If a response is thinking-only with zero text content blocks,
+                # text_stream yields nothing and returns immediately without
+                # ever processing the stream's message_stop event — so the
+                # SDK's internal final-message snapshot never gets built, and
+                # get_final_message() then raises a bare AssertionError instead
+                # of a clean error. Iterating the full event stream guarantees
+                # the snapshot is always built, text or no text.
+                for _ in stream:
+                    pass
+                try:
+                    final_message = stream.get_final_message()
+                except AssertionError:
+                    # Belt-and-suspenders: even after full iteration, if the
+                    # snapshot still wasn't built (fully thinking-only
+                    # response), treat it as "no text" rather than crashing —
+                    # this is the same failure class as our existing
+                    # thinking-only-response handling below.
+                    return ""
             return _extract_text_from_response(final_message)
 
         # Primary attempt with a modest budget
