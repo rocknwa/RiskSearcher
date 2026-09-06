@@ -20,6 +20,7 @@ from __future__ import annotations
 import os
 import re
 import time
+import traceback
 from pathlib import Path
 from typing import Optional
 
@@ -260,12 +261,13 @@ def _call_agentrouter(prompt: str, model: str = "anthropic/claude-2", timeout: i
         raise
     except Exception as e:
         # Wrap other runtime failures (auth, network, server errors).
-        # str(e) is sometimes empty for certain low-level connection/SSL
-        # exceptions (seen on some cloud hosts) — include the exception
-        # type and repr() too so we always get something diagnostic,
-        # instead of a blank message after the colon.
+        # A bare AssertionError() with no message and no delay usually
+        # means something failed at connection/setup time, before any
+        # real model call happened — the full traceback pinpoints
+        # exactly which line inside our code or the SDK raised it.
+        tb = traceback.format_exc()
         raise LLMError(
-            f"AgentRouter call failed: [{type(e).__name__}] {e!r}"
+            f"AgentRouter call failed: [{type(e).__name__}] {e!r}\n{tb}"
         )
 
 
