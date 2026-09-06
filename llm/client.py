@@ -246,25 +246,22 @@ def _call_agentrouter(prompt: str, model: str = "anthropic/claude-2", timeout: i
                 # get_final_message() then raises a bare AssertionError instead
                 # of a clean error. Iterating the full event stream guarantees
                 # the snapshot is always built, text or no text.
+                event_count = 0
                 for _ in stream:
-                    pass
+                    event_count += 1
                 try:
                     final_message = stream.get_final_message()
                 except AssertionError:
-                    # Belt-and-suspenders: even after full iteration, if the
-                    # snapshot still wasn't built (fully thinking-only
-                    # response), treat it as "no text" rather than crashing —
-                    # this is the same failure class as our existing
-                    # thinking-only-response handling below.
+                    # If this still fires even after iterating the FULL raw
+                    # stream (not just text_stream), it means the stream
+                    # ended having processed zero events at all — consistent
+                    # with the connection being cut or never properly
+                    # established, not with the model "thinking a lot".
+                    print(f"    [LLM CLIENT] get_final_message() AssertionError even after full stream iteration — {event_count} raw event(s) processed before the stream ended")
                     return ""
-                # Diagnostic: if this is empty/near-empty very fast (seconds,
-                # not the minutes a real completion takes), that points to
-                # the request never actually reaching the model at all —
-                # e.g. a WAF/proxy intercepting the connection — rather than
-                # genuine model "thinking" behavior.
                 n_blocks = len(getattr(final_message, "content", None) or [])
                 stop_reason = getattr(final_message, "stop_reason", None)
-                print(f"    [LLM CLIENT] Final message: {n_blocks} content block(s), stop_reason={stop_reason}")
+                print(f"    [LLM CLIENT] Final message: {n_blocks} content block(s), stop_reason={stop_reason}, {event_count} raw event(s) processed")
             return _extract_text_from_response(final_message)
 
         prompt_len = len(prompt)
