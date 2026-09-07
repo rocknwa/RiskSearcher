@@ -6,6 +6,8 @@ interface ScannerViewProps {
   activeToken: TokenInvestigation;
   onSelectToken: (token: TokenInvestigation) => void;
   onRunScan: (address: string, network: EVMNetwork, handlers: AnalysisStreamHandlers) => void;
+  autoScanRequest?: { id: number; address: string; network: EVMNetwork } | null;
+  onAutoScanRequestHandled?: () => void;
   userAccount: UserAccountState;
   onOpenBytecodeModal: (code: string, title: string) => void;
   onOpenAddFundsModal: () => void;
@@ -21,6 +23,8 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
   activeToken,
   onSelectToken,
   onRunScan,
+  autoScanRequest,
+  onAutoScanRequestHandled,
   userAccount,
   onOpenBytecodeModal,
   onOpenAddFundsModal,
@@ -42,6 +46,7 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
   const [copiedAudit, setCopiedAudit] = useState(false);
   const [copiedAddress, setCopiedAddress] = useState(false);
   const streamEndRef = useRef<HTMLDivElement>(null);
+  const handledAutoScanIdRef = useRef<number | null>(null);
 
   useEffect(() => {
     setInputAddress(activeToken.address);
@@ -64,27 +69,21 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
       item.address.toLowerCase().includes(filterQuery.toLowerCase())
   );
 
-  const handleFormSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inputAddress.trim()) return;
-
-    // World ID gate check: Brand new user must verify before consuming free scans
-    if (!userAccount.isWorldIdVerified) {
+  const startScan = (address: string, network: EVMNetwork, skipScannerGates = false) => {
+    if (!address.trim()) return;
+    if (!skipScannerGates && !userAccount.isWorldIdVerified) {
       onOpenWorldIdModal();
       return;
     }
-
-    // Check credits
-    if (userAccount.freeScansRemaining <= 0 && !userAccount.activeSubscription && userAccount.riskSearcherBalance <= 0) {
+    if (!skipScannerGates && userAccount.freeScansRemaining <= 0 && !userAccount.activeSubscription && userAccount.riskSearcherBalance <= 0) {
       onOpenSubscriptionModal();
       return;
     }
-
     setIsScanning(true);
     setScanCurrentStage(1);
     setScanProgressMessage('[1/5] Fetching contract source...');
     setScanError(null);
-    onRunScan(inputAddress.trim(), selectedNetwork, {
+    onRunScan(address.trim(), network, {
       onProgress: ({ message }) => {
         setScanProgressMessage(message);
         const stage = /^\[(\d)\/5\]/.exec(message)?.[1];
@@ -97,6 +96,20 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
       },
     });
   };
+
+  const handleFormSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    startScan(inputAddress, selectedNetwork);
+  };
+
+  useEffect(() => {
+    if (!autoScanRequest || handledAutoScanIdRef.current === autoScanRequest.id) return;
+    handledAutoScanIdRef.current = autoScanRequest.id;
+    setInputAddress(autoScanRequest.address);
+    setSelectedNetwork(autoScanRequest.network);
+    onAutoScanRequestHandled?.();
+    startScan(autoScanRequest.address, autoScanRequest.network, true);
+  }, [autoScanRequest, onAutoScanRequestHandled]);
 
   const handleSelectDemoToken = (id: string) => {
     const found = investigations.find((t) => t.id === id);

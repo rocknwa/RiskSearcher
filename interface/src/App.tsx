@@ -30,6 +30,7 @@ export default function App() {
   const [transactions, setTransactions] = useState<LedgerTransaction[]>(INITIAL_TRANSACTIONS);
   const [isWalletConnected, setIsWalletConnected] = useState<boolean>(false);
   const [pendingScan, setPendingScan] = useState<{ address: string; network: EVMNetwork } | null>(null);
+  const [scannerAutoScan, setScannerAutoScan] = useState<{ id: number; address: string; network: EVMNetwork } | null>(null);
   const [walletModalPrompt, setWalletModalPrompt] = useState<string | undefined>(undefined);
 
   // Modals state
@@ -102,6 +103,15 @@ export default function App() {
         `Sign in or connect your wallet to analyze ${address.slice(0, 10)}... (${network}) and view the forensic risk report.`
       );
       setIsWalletModalOpen(true);
+      return;
+    }
+
+    // Landing-page scans have no ScannerView handlers yet. Navigate first so
+    // the existing scanner can own and display the live streaming progress.
+    if (!handlers) {
+      setScannerAutoScan({ id: Date.now(), address, network });
+      setCurrentView('scanner');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
 
@@ -248,7 +258,10 @@ export default function App() {
       const target = pendingScan;
       setPendingScan(null);
       setWalletModalPrompt(undefined);
-      triggerScanDirect(target.address, target.network, { onProgress: () => undefined, onResult: () => undefined, onError: () => undefined });
+      setIsWalletModalOpen(false);
+      setScannerAutoScan({ id: Date.now(), address: target.address, network: target.network });
+      setCurrentView('scanner');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     } else {
       setWalletModalPrompt(undefined);
     }
@@ -325,6 +338,8 @@ export default function App() {
               window.scrollTo({ top: 0, behavior: 'smooth' });
             }}
             onRunScan={handleStartScan}
+            autoScanRequest={scannerAutoScan}
+            onAutoScanRequestHandled={() => setScannerAutoScan(null)}
             userAccount={userAccount}
             onOpenBytecodeModal={(code, title) => {
               setBytecodeModal({ isOpen: true, code, title });
