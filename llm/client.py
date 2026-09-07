@@ -1,13 +1,21 @@
 """Tiered LLM client for RiskSearcher.
 
-Behavior:
+Behavior (fallback chain, in order):
 - Prefer Anthropic if `ANTHROPIC_API_KEY` is set.
-- If missing or failing with rate-limit/quota, try AgentRouter if `AGENTROUTER_API_KEY` is set.
-- If AgentRouter fails with rate-limit/quota, fall back to a GPT model through AgentRouter (same key, different model string), then DeepSeek similarly.
-- If no API keys or all attempts fail, return a graceful degraded result that the caller can include in the report.
+- If missing or failing, try OpenRouter's free tier if `OPENROUTER_API_KEY` is set.
+- If OpenRouter is rate-limited or fails, try Groq's free tier if `GROQ_API_KEY` is set —
+  a separate rate-limit pool (per-org, per-model on Groq's own infra) from OpenRouter's,
+  so it genuinely absorbs overflow instead of sharing the same bottleneck. No credit card
+  required, unlike Vercel AI Gateway's $5/month credit.
+- If Groq fails too, fall back to AgentRouter (deepseek-v4-flash, then glm-5.3) if
+  `AGENTROUTER_API_KEY` is set.
+- If no API keys or all attempts fail, return a graceful degraded result that the caller
+  can include in the report.
 
 For reproducible testing we support the environment var `LLMSIMULATE` which may be set to:
  - "anthropic-rate"    -> simulate Anthropic rate-limit
+ - "openrouter-rate"   -> simulate OpenRouter rate-limit
+ - "groq-rate"         -> simulate Groq rate-limit
  - "agentrouter-rate"  -> simulate AgentRouter rate-limit
  - "all-fail"         -> simulate all providers failing
 
@@ -256,6 +264,54 @@ def _call_openrouter(prompt: str, model: str = "openrouter/free", timeout: int =
         raise LLMError(f"OpenRouter call failed: [{type(e).__name__}] {e!r}")
 
 
+def _call_groq(prompt: str, model: str = "llama-3.3-70b-versatile", timeout: int = 60) -> str:
+    """Call Groq's OpenAI-compatible chat completions API.
+
+    Requires GROQ_API_KEY in env. Added as a second cloud-deployment-reliable
+    fallback alongside OpenRouter — Groq's free tier draws from a completely
+    separate rate-limit pool (per-org, per-model on Groq's own infrastructure)
+    so it genuinely absorbs overflow when OpenRouter's free tier is rate-limited,
+    rather than sharing the same bottleneck. No credit card required for the
+    free tier, unlike Vercel AI Gateway's $5/month credit which some users
+    report converting to paid billing once a card is added for verification.
+    """
+    if _simulate("groq"):
+        raise LLMError("Simulated Groq rate-limit")
+
+    key = os.environ.get("GROQ_API_KEY")
+    if not key:
+        raise LLMError("No Groq key")
+
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    try:
+        r = requests.post(url, headers=headers, json=payload, timeout=timeout)
+        if r.status_code == 401:
+            raise LLMError(f"Groq authentication failed: HTTP 401: {r.text[:300]}")
+        if r.status_code == 429:
+            raise LLMError(f"Groq rate-limited: {r.text[:300]}")
+        if 500 <= r.status_code < 600:
+            raise LLMError(f"Groq server error: {r.status_code}")
+        r.raise_for_status()
+        data = r.json()
+        choices = data.get("choices") or []
+        if not choices:
+            raise LLMError(f"Groq returned no choices: {data}")
+        content = (choices[0].get("message") or {}).get("content") or ""
+        return content
+    except LLMError:
+        raise
+    except Exception as e:
+        raise LLMError(f"Groq call failed: [{type(e).__name__}] {e!r}")
+
+
 def _call_agentrouter(prompt: str, model: str = "anthropic/claude-2", timeout: int = 20) -> str:
     if _simulate("agentrouter"):
         raise LLMError("Simulated AgentRouter rate-limit")
@@ -463,6 +519,48 @@ def run_specialist(specialist_id: str, prompt: str, *, timeout: int = 30) -> dic
                     print(f"[LLM CLIENT] INFO: OpenRouter model {model_name} failed transiently: {msg}; trying next model")
 
     sim = _get_sim_env()
+    if sim and "groq-canned" in sim:
+        return {
+            "backend": "groq",
+            "provider": "groq",
+            "model": "groq-canned",
+            "response": "[SIMULATED Groq response] Detailed analysis: ...",
+            "error": None,
+            "_simulated": True,
+        }
+
+    if not os.environ.get("GROQ_API_KEY"):
+        print("[LLM CLIENT] INFO: GROQ_API_KEY not set; skipping Groq")
+    else:
+        for model_name in (
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+        ):
+            print(f"[LLM] Trying Groq ({model_name})...")
+            try:
+                resp = _call_groq(prompt, model=model_name, timeout=timeout)
+                text = resp if isinstance(resp, str) else _extract_text_from_response(resp)
+                if not text:
+                    raise LLMError("Groq returned no visible text")
+                print(f"[LLM] Trying Groq ({model_name})... success")
+                return {
+                    "backend": "groq",
+                    "provider": "groq",
+                    "model": model_name,
+                    "response": text,
+                    "error": None,
+                    "_simulated": False,
+                }
+            except LLMError as e:
+                msg = str(e)
+                err = err + "; " + msg if err else msg
+                print(f"[LLM] Trying Groq ({model_name})... failed: {msg}")
+                if any(t in msg.lower() for t in ("401", "unauthor", "invalid", "authentication")):
+                    print(f"[LLM CLIENT] WARNING: Groq authentication failed for model {model_name}; trying next model")
+                else:
+                    print(f"[LLM CLIENT] INFO: Groq model {model_name} failed transiently: {msg}; trying next model")
+
+    sim = _get_sim_env()
     if sim and "agentrouter-canned" in sim:
         return {
             "backend": "agentrouter",
@@ -549,6 +647,8 @@ def run_judge(rule_findings: dict, specialist_findings: str, *, address: str = "
                 resp = _call_agentrouter(judge_prompt, model=model, timeout=30)
             elif provider == "openrouter":
                 resp = _call_openrouter(judge_prompt, model=model, timeout=60)
+            elif provider == "groq":
+                resp = _call_groq(judge_prompt, model=model, timeout=60)
             else:
                 raise LLMError(f"Unsupported provider for judge: {provider}")
             text = resp if isinstance(resp, str) else _extract_text_from_response(resp)
@@ -591,6 +691,23 @@ def run_judge(rule_findings: dict, specialist_findings: str, *, address: str = "
                     parsed = _parse_judge_response(text)
                     if parsed:
                         return {**parsed, "backend": "openrouter", "provider": "openrouter", "model": model_name, "error": None, "_simulated": False}
+            except LLMError as e:
+                err = str(e)
+
+    if not os.environ.get("GROQ_API_KEY"):
+        print("[LLM CLIENT] INFO: GROQ_API_KEY not set; skipping judge via Groq")
+    else:
+        for model_name in (
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+        ):
+            try:
+                resp = _call_groq(judge_prompt, model=model_name, timeout=60)
+                text = resp if isinstance(resp, str) else _extract_text_from_response(resp)
+                if text:
+                    parsed = _parse_judge_response(text)
+                    if parsed:
+                        return {**parsed, "backend": "groq", "provider": "groq", "model": model_name, "error": None, "_simulated": False}
             except LLMError as e:
                 err = str(e)
 
