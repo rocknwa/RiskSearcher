@@ -259,10 +259,14 @@ def analyze(
         f"Contract: {contract_name}\n\n"
         "LIQUIDITY EVIDENCE INSTRUCTIONS: The Graph evidence below is live Uniswap V3 "
         "Ethereum-mainnet data. Treat clearly flagged no_data as unavailable evidence, not "
-        "as proof of safety or risk. When data is available, assess whether very thin or "
-        "very new liquidity, or swap volume disproportionate to liquidity, changes the "
-        "legitimacy/rug-pull assessment. State the observed figures and explain the signal; "
-        "do not infer LP-lock status from these figures alone.\n\n"
+        "as proof of safety or risk. If pools_data_reliable is false, total_liquidity_usd "
+        "may still be real but pool_count/first_swap_timestamp/recent_swap_volume_usd are "
+        "NOT confirmed - treat those specific fields as unavailable, not as confirmed zero, "
+        "and do not cite '0 pools' or '$0 volume' as a finding in that case. When data is "
+        "available and reliable, assess whether very thin or very new liquidity, or swap "
+        "volume disproportionate to liquidity, changes the legitimacy/rug-pull assessment. "
+        "State the observed figures and explain the signal; do not infer LP-lock status "
+        "from these figures alone.\n\n"
     )
     if specialist_context["mode"] == "source":
         token_risk_prompt += (

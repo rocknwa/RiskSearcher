@@ -14,6 +14,15 @@ def _specialist(result) -> tuple[dict | None, str]:
     return None, ""
 
 
+def _graph_layer_status(graph_evidence: dict | None) -> str:
+    graph = graph_evidence or {}
+    if graph.get("no_data", True):
+        return f"unavailable ({graph.get('reason', 'no data')})"
+    if not graph.get("pools_data_reliable", True):
+        return "fetched live (TVL only — pool-level detail unavailable, see note below)"
+    return "fetched live"
+
+
 def render_markdown_report(result) -> str:
     """Render an AnalysisResult as a human-readable Markdown report."""
     specialist, specialist_response = _specialist(result)
@@ -21,7 +30,7 @@ def render_markdown_report(result) -> str:
         "- Bytecode scan: ran",
         f"- Source scan: {'ran (verified source)' if result.source_verified else 'did not run (contract source is unverified)'}",
         "- Behavioral analysis: ran",
-        f"- The Graph / Uniswap V3 liquidity evidence: {'unavailable (' + (result.graph_evidence or {}).get('reason', 'no data') + ')' if (result.graph_evidence or {}).get('no_data', True) else 'fetched live'}",
+        f"- The Graph / Uniswap V3 liquidity evidence: {_graph_layer_status(result.graph_evidence)}",
     ]
     if specialist_response:
         layers.append("- LLM specialist: ran (token-risk specialist — balance/access-control, liquidity, mint privilege, trading controls, upgradeability, ownership, and honeypot/sell-blocking patterns)")
@@ -86,14 +95,28 @@ def render_markdown_report(result) -> str:
     graph = result.graph_evidence or {}
     if graph and not graph.get("no_data", True):
         volumes = graph.get("recent_swap_volume_usd") or {}
+        pools_reliable = graph.get("pools_data_reliable", True)
+        volume_24h = volumes.get("24h")
+        volume_7d = volumes.get("7d")
         lines.extend([
             "- **Source:** The Graph — Uniswap V3 Ethereum mainnet subgraph",
             f"- **Pool count:** {graph.get('pool_count', 0)}",
             f"- **Total liquidity (USD):** ${float(graph.get('total_liquidity_usd') or 0):,.2f}",
             f"- **First observed swap timestamp:** {graph.get('first_swap_timestamp') or 'not available'}",
-            f"- **Recent swap volume:** ${float(volumes.get('24h') or 0):,.2f} (24h); ${float(volumes.get('7d') or 0):,.2f} (7d)",
+            (
+                f"- **Recent swap volume:** ${float(volume_24h or 0):,.2f} (24h); ${float(volume_7d or 0):,.2f} (7d)"
+                if pools_reliable
+                else "- **Recent swap volume:** not available this run (pool-level detail unreliable — see note below)"
+            ),
             "- **Verdict use:** The token-risk specialist was instructed to assess liquidity depth, pool age, and volume/liquidity mismatches as legitimacy signals.",
         ])
+        if not pools_reliable:
+            lines.append(
+                "- **Note:** Total liquidity (USD) came back nonzero but pool-level detail "
+                "(pool count, swap age, volume) did not. That combination is internally "
+                "inconsistent, so pool-level figures above are marked unavailable rather than "
+                "shown as confirmed zero, and were not treated as a safety signal."
+            )
     else:
         lines.append(f"- Unavailable this run: {graph.get('reason', 'no Graph data returned')}. This was not treated as a safety signal.")
 
