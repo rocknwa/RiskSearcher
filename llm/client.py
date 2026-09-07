@@ -264,7 +264,7 @@ def _call_openrouter(prompt: str, model: str = "openrouter/free", timeout: int =
         raise LLMError(f"OpenRouter call failed: [{type(e).__name__}] {e!r}")
 
 
-def _call_groq(prompt: str, model: str = "llama-3.3-70b-versatile", timeout: int = 60) -> str:
+def _call_groq(prompt: str, model: str = "openai/gpt-oss-120b", timeout: int = 60) -> str:
     """Call Groq's OpenAI-compatible chat completions API.
 
     Requires GROQ_API_KEY in env. Added as a second cloud-deployment-reliable
@@ -274,6 +274,12 @@ def _call_groq(prompt: str, model: str = "llama-3.3-70b-versatile", timeout: int
     rather than sharing the same bottleneck. No credit card required for the
     free tier, unlike Vercel AI Gateway's $5/month credit which some users
     report converting to paid billing once a card is added for verification.
+
+    Model note: llama-3.3-70b-versatile and llama-3.1-8b-instant were
+    decommissioned by Groq on 2026-08-16 (deprecation announced 2026-06-17).
+    Using their recommended replacements, openai/gpt-oss-120b and
+    openai/gpt-oss-20b, instead. Check https://console.groq.com/docs/deprecations
+    if this starts 404ing again — Groq rotates its free-tier lineup periodically.
     """
     if _simulate("groq"):
         raise LLMError("Simulated Groq rate-limit")
@@ -533,8 +539,8 @@ def run_specialist(specialist_id: str, prompt: str, *, timeout: int = 30) -> dic
         print("[LLM CLIENT] INFO: GROQ_API_KEY not set; skipping Groq")
     else:
         for model_name in (
-            "llama-3.3-70b-versatile",
-            "llama-3.1-8b-instant",
+            "openai/gpt-oss-120b",
+            "openai/gpt-oss-20b",
         ):
             print(f"[LLM] Trying Groq ({model_name})...")
             try:
@@ -698,8 +704,8 @@ def run_judge(rule_findings: dict, specialist_findings: str, *, address: str = "
         print("[LLM CLIENT] INFO: GROQ_API_KEY not set; skipping judge via Groq")
     else:
         for model_name in (
-            "llama-3.3-70b-versatile",
-            "llama-3.1-8b-instant",
+            "openai/gpt-oss-120b",
+            "openai/gpt-oss-20b",
         ):
             try:
                 resp = _call_groq(judge_prompt, model=model_name, timeout=60)
