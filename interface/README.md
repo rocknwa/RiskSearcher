@@ -10,6 +10,6 @@ analysis engine lives in the main RiskSearcher backend repo.
 
 1. Install dependencies:
    `npm install`
-2. Copy `.env.example` to `.env.local` and set `VITE_API_BASE_URL` to your running backend.
+2. Copy `.env.example` to `.env.local` and set `VITE_API_BASE_URL` to the backend URL supplied by your deployment configuration. Do not commit that value.
 3. Run the app:
    `npm run dev`

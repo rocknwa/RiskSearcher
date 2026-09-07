@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { TokenInvestigation, EVMNetwork, UserAccountState } from '../types';
+import { AnalysisStreamHandlers, TokenInvestigation, EVMNetwork, UserAccountState } from '../types';
 
 interface ScannerViewProps {
   investigations: TokenInvestigation[];
   activeToken: TokenInvestigation;
   onSelectToken: (token: TokenInvestigation) => void;
-  onRunScan: (address: string, network: EVMNetwork) => void;
+  onRunScan: (address: string, network: EVMNetwork, handlers: AnalysisStreamHandlers) => void;
+  autoScanRequest?: { id: number; address: string; network: EVMNetwork } | null;
+  onAutoScanRequestHandled?: () => void;
   userAccount: UserAccountState;
   onOpenBytecodeModal: (code: string, title: string) => void;
   onOpenAddFundsModal: () => void;
@@ -21,6 +23,8 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
   activeToken,
   onSelectToken,
   onRunScan,
+  autoScanRequest,
+  onAutoScanRequestHandled,
   userAccount,
   onOpenBytecodeModal,
   onOpenAddFundsModal,
@@ -35,11 +39,14 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
   const [selectedNetwork, setSelectedNetwork] = useState<EVMNetwork>(activeToken.network || 'Ethereum');
   const [isScanning, setIsScanning] = useState(false);
   const [scanCurrentStage, setScanCurrentStage] = useState(1);
+  const [scanProgressMessage, setScanProgressMessage] = useState('[1/5] Fetching contract source...');
+  const [scanError, setScanError] = useState<string | null>(null);
   const [isReSimulating, setIsReSimulating] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedAudit, setCopiedAudit] = useState(false);
   const [copiedAddress, setCopiedAddress] = useState(false);
   const streamEndRef = useRef<HTMLDivElement>(null);
+  const handledAutoScanIdRef = useRef<number | null>(null);
 
   useEffect(() => {
     setInputAddress(activeToken.address);
@@ -62,43 +69,47 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
       item.address.toLowerCase().includes(filterQuery.toLowerCase())
   );
 
-  const handleFormSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inputAddress.trim()) return;
-
-    // World ID gate check: Brand new user must verify before consuming free scans
-    if (!userAccount.isWorldIdVerified) {
+  const startScan = (address: string, network: EVMNetwork, skipScannerGates = false) => {
+    if (!address.trim()) return;
+    if (!skipScannerGates && !userAccount.isWorldIdVerified) {
       onOpenWorldIdModal();
       return;
     }
-
-    // Check credits
-    if (userAccount.freeScansRemaining <= 0 && !userAccount.activeSubscription && userAccount.riskSearcherBalance <= 0) {
+    if (!skipScannerGates && userAccount.freeScansRemaining <= 0 && !userAccount.activeSubscription && userAccount.riskSearcherBalance <= 0) {
       onOpenSubscriptionModal();
       return;
     }
-
     setIsScanning(true);
     setScanCurrentStage(1);
-
-    // Simulate 5 sequential stages
-    const timer1 = setTimeout(() => setScanCurrentStage(2), 400);
-    const timer2 = setTimeout(() => setScanCurrentStage(3), 800);
-    const timer3 = setTimeout(() => setScanCurrentStage(4), 1200);
-    const timer4 = setTimeout(() => setScanCurrentStage(5), 1500);
-    const timer5 = setTimeout(() => {
-      setIsScanning(false);
-      onRunScan(inputAddress.trim(), selectedNetwork);
-    }, 1800);
-
-    return () => {
-      clearTimeout(timer1);
-      clearTimeout(timer2);
-      clearTimeout(timer3);
-      clearTimeout(timer4);
-      clearTimeout(timer5);
-    };
+    setScanProgressMessage('[1/5] Fetching contract source...');
+    setScanError(null);
+    onRunScan(address.trim(), network, {
+      onProgress: ({ message }) => {
+        setScanProgressMessage(message);
+        const stage = /^\[(\d)\/5\]/.exec(message)?.[1];
+        if (stage) setScanCurrentStage(Number(stage));
+      },
+      onResult: () => setIsScanning(false),
+      onError: (message) => {
+        setIsScanning(false);
+        setScanError(message);
+      },
+    });
   };
+
+  const handleFormSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    startScan(inputAddress, selectedNetwork);
+  };
+
+  useEffect(() => {
+    if (!autoScanRequest || handledAutoScanIdRef.current === autoScanRequest.id) return;
+    handledAutoScanIdRef.current = autoScanRequest.id;
+    setInputAddress(autoScanRequest.address);
+    setSelectedNetwork(autoScanRequest.network);
+    onAutoScanRequestHandled?.();
+    startScan(autoScanRequest.address, autoScanRequest.network, true);
+  }, [autoScanRequest, onAutoScanRequestHandled]);
 
   const handleSelectDemoToken = (id: string) => {
     const found = investigations.find((t) => t.id === id);
@@ -539,6 +550,7 @@ Generated via RiskSearcher Multi-Judge SEC-KERNEL`;
                   </div>
 
                   <div className="space-y-2 font-mono text-xs">
+                    <p className="text-[#adc6ff] pb-1">{scanProgressMessage}</p>
                     <div className={`flex items-center gap-2 ${scanCurrentStage >= 1 ? 'text-[#4edea3]' : 'text-[#8c909f]'}`}>
                       <span className="material-symbols-outlined text-[16px]">
                         {scanCurrentStage > 1 ? 'check_circle' : 'radio_button_checked'}
@@ -586,6 +598,35 @@ Generated via RiskSearcher Multi-Judge SEC-KERNEL`;
                       <div key={idx} className="flex items-start gap-1.5 text-[#c2c6d6]">
                         <span className="material-symbols-outlined text-[14px] text-[#4edea3] shrink-0 mt-0.5">check_circle</span>
                         <span>{step.title}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {scanError && (
+                <div className="bg-[#93000a]/20 p-4 rounded-xl border border-[#ffb4ab]/40 space-y-2">
+                  <div className="flex items-start gap-2 text-[#ffb4ab] font-mono text-xs">
+                    <span className="material-symbols-outlined text-[18px]">error</span>
+                    <span>{scanError}</span>
+                  </div>
+                  <button type="button" onClick={() => handleFormSubmit({ preventDefault: () => undefined } as React.FormEvent)} className="text-xs font-mono font-bold text-[#00285d] bg-[#ffb4ab] hover:bg-[#ffdad6] px-3 py-1.5 rounded-lg">
+                    Retry analysis
+                  </button>
+                </div>
+              )}
+
+              {activeToken.analysisParameters && Object.keys(activeToken.analysisParameters).length > 0 && (
+                <div className="bg-[#060e20] p-4 rounded-xl border border-[#222a3d] space-y-2">
+                  <h3 className="font-semibold text-sm text-[#dae2fd] flex items-center gap-2">
+                    <span className="material-symbols-outlined text-[#4cd7f6] text-[18px]">tune</span>
+                    <span>Analysis Parameters</span>
+                  </h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 font-mono text-xs">
+                    {Object.entries(activeToken.analysisParameters).map(([key, value]) => (
+                      <div key={key} className="bg-[#131b2e] px-3 py-2 rounded-lg border border-[#222a3d]">
+                        <span className="text-[#8c909f]">{key}: </span>
+                        <span className="text-[#dae2fd] break-all">{typeof value === 'string' ? value : JSON.stringify(value)}</span>
                       </div>
                     ))}
                   </div>

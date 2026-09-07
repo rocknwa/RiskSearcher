@@ -331,52 +331,71 @@ def analyze(
     if specialist_success:
         _emit("    [LLM] Specialist: returned usable response")
     else:
-        _emit("    [LLM] Specialist: no usable response; continuing with rule-based verdict")
+        _emit("    [LLM] Specialist: no usable response; running judge on rule findings alone")
 
-    # Explicit verdict branch: specialist success -> judge pass; otherwise pure rule fallback
-    judge_result = {"verdict": "", "severity": "", "reason": "", "error": "", "backend": "none"}
+    # The judge pass always runs now, even when the specialist couldn't get
+    # a response (source too large for a backend's free-tier limits, every
+    # backend rate-limited, etc). Rule findings alone are a tiny payload —
+    # just the label/score breakdown, not source code — so this fits well
+    # under Groq's free-tier TPM ceiling regardless of contract size, and
+    # it's what actually catches cases like a low-scoring rule hit (e.g. an
+    # internal _mint() call with no supply cap) that's genuinely severe but
+    # would otherwise ship as "SAFE" purely because no specialist ever
+    # reviewed it. When there's no specialist response to reuse a backend
+    # from, the judge runs its own independent
+    # Anthropic -> OpenRouter -> Groq -> AgentRouter fallback chain instead
+    # of inheriting the specialist's (failed) one.
     if specialist_success:
         _emit("[4/5] Running judge pass...")
-        try:
-            judge_result = run_judge(
-                rule_findings=scoring,
-                specialist_findings=specialist_result.get("response", ""),
-                address=address,
-                chain=chain or "ethereum",
-                provider=specialist_result.get("provider"),
-                model=specialist_result.get("model"),
-            )
-        except Exception as exc:
-            judge_result = {"verdict": "", "severity": "", "reason": "", "error": str(exc), "backend": "none"}
+        judge_specialist_findings = specialist_result.get("response", "")
+        judge_provider = specialist_result.get("provider")
+        judge_model = specialist_result.get("model")
+    else:
+        _emit("[4/5] Running judge pass (rule findings only — specialist unavailable)...")
+        judge_specialist_findings = (
+            "(No specialist LLM analysis was available — every backend was rate-limited, "
+            "unreachable, or the source was too large to fit within a free-tier token limit. "
+            "Evaluate ONLY the rule-based findings below and judge whether any of the named "
+            "patterns represent a real, severe risk that the raw rule score may be "
+            "under-representing — e.g. an unrestricted internal mint call is critical "
+            "regardless of how few rule-engine points it was assigned.)"
+        )
+        judge_provider = None
+        judge_model = None
 
-        if judge_result.get("verdict") and judge_result.get("reason"):
-            final_verdict = judge_result["verdict"]
-            final_severity = judge_result.get("severity") or scoring["severity"]
-            final_reason = judge_result["reason"]
-            if judge_result.get("score") is not None:
-                final_score = int(judge_result["score"])
-            else:
-                final_score = _severity_to_score(final_severity)
-            score_source = "llm_judge"
-            verdict_source = "llm_judge"
-            _emit("    [LLM] Judge: returned final verdict/severity/reason")
+    try:
+        judge_result = run_judge(
+            rule_findings=scoring,
+            specialist_findings=judge_specialist_findings,
+            address=address,
+            chain=chain or "ethereum",
+            provider=judge_provider,
+            model=judge_model,
+        )
+    except Exception as exc:
+        judge_result = {"verdict": "", "severity": "", "reason": "", "error": str(exc), "backend": "none"}
+
+    if judge_result.get("verdict") and judge_result.get("reason"):
+        final_verdict = judge_result["verdict"]
+        final_severity = judge_result.get("severity") or scoring["severity"]
+        final_reason = judge_result["reason"]
+        if judge_result.get("score") is not None:
+            final_score = int(judge_result["score"])
         else:
-            final_verdict = scoring["verdict"]
-            final_severity = scoring["severity"]
-            final_reason = "Rule-based verdict retained after judge failure"
-            final_score = rule_score
-            score_source = "rule_based"
-            verdict_source = "rule_based"
-            judge_error = judge_result.get("error") or "judge returned an invalid or empty response"
-            _emit(f"    [LLM] Judge: failed ({judge_error}); retaining rule-based verdict")
+            final_score = _severity_to_score(final_severity)
+        score_source = "llm_judge"
+        verdict_source = "llm_judge"
+        judge_error = ""
+        _emit("    [LLM] Judge: returned final verdict/severity/reason")
     else:
         final_verdict = scoring["verdict"]
         final_severity = scoring["severity"]
-        final_reason = (scoring["breakdown"][0] if scoring.get("breakdown") else "No risk signals detected")
+        final_reason = "Rule-based verdict retained after judge failure"
         final_score = rule_score
         score_source = "rule_based"
         verdict_source = "rule_based"
-        judge_error = "no real specialist response reached the judge"
+        judge_error = judge_result.get("error") or "judge returned an invalid or empty response"
+        _emit(f"    [LLM] Judge: failed ({judge_error}); retaining rule-based verdict")
 
     _emit("[5/5] Generating report...")
     llm_report = analyze_contract(
@@ -412,7 +431,7 @@ def analyze(
         called_functions=tx_analysis.get("called_functions", {}),
         specialist_findings=[{"id": "token_risk", "result": specialist_result}],
         comment=final_reason,
-        judge_error=judge_result.get("error", "") if specialist_success else judge_error,
+        judge_error=judge_error,
         final_reason=final_reason,
         rule_score=rule_score,
         score_source=score_source,

@@ -9,6 +9,29 @@ export type EVMNetwork =
 
 export type RiskVerdict = 'UNSAFE' | 'SAFE' | 'THREAT' | 'MALICIOUS' | 'VERIFIED SAFE';
 
+export interface AnalysisProgressEvent {
+  message: string;
+}
+
+/** The final `result` event emitted by the FastAPI `/analyze` SSE endpoint. */
+export interface AnalysisApiResult {
+  verdict: string;
+  severity: string;
+  score: number;
+  rule_score: number | null;
+  score_source: string | null;
+  verdict_source: string | null;
+  final_reason: string;
+  parameters?: Record<string, unknown>;
+  breakdown: string[];
+}
+
+export interface AnalysisStreamHandlers {
+  onProgress: (event: AnalysisProgressEvent) => void;
+  onResult: (result: AnalysisApiResult) => void;
+  onError: (message: string) => void;
+}
+
 export interface VulnerabilityFlag {
   id: string;
   severity: 'CRITICAL' | 'WARNING' | 'NOTICE';
@@ -61,6 +84,7 @@ export interface TokenInvestigation {
   isAnalyzing?: boolean;
   userPrompt?: string;
   verdictExplanation: string;
+  analysisParameters?: Record<string, unknown>;
   executionSteps: {
     title: string;
     duration: string;

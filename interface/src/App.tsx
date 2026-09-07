@@ -19,7 +19,8 @@ import {
   INITIAL_USER_ACCOUNT,
   INITIAL_TRANSACTIONS,
 } from './data/mockData';
-import { TokenInvestigation, EVMNetwork, UserAccountState, LedgerTransaction } from './types';
+import { AnalysisApiResult, AnalysisStreamHandlers, TokenInvestigation, EVMNetwork, UserAccountState, LedgerTransaction, RiskVerdict, VulnerabilityFlag } from './types';
+import { streamContractAnalysis } from './services/riskSearcherApi';
 
 export default function App() {
   const [currentView, setCurrentView] = useState<'landing' | 'scanner' | 'accounts' | 'supported-chains' | 'pricing' | 'documentation' | 'how-it-works'>('landing');
@@ -29,6 +30,7 @@ export default function App() {
   const [transactions, setTransactions] = useState<LedgerTransaction[]>(INITIAL_TRANSACTIONS);
   const [isWalletConnected, setIsWalletConnected] = useState<boolean>(false);
   const [pendingScan, setPendingScan] = useState<{ address: string; network: EVMNetwork } | null>(null);
+  const [scannerAutoScan, setScannerAutoScan] = useState<{ id: number; address: string; network: EVMNetwork } | null>(null);
   const [walletModalPrompt, setWalletModalPrompt] = useState<string | undefined>(undefined);
 
   // Modals state
@@ -47,143 +49,53 @@ export default function App() {
   const [isWithdrawModalOpen, setIsWithdrawModalOpen] = useState(false);
   const [isSubscriptionModalOpen, setIsSubscriptionModalOpen] = useState(false);
 
-  const triggerScanDirect = (address: string, network: EVMNetwork) => {
-    // Check if token already exists in history
-    const existing = investigations.find(
-      (t) => t.address.toLowerCase() === address.toLowerCase()
-    );
+  const createInvestigationFromApiResult = (address: string, network: EVMNetwork, result: AnalysisApiResult): TokenInvestigation => {
+    const normalizedVerdict = result.verdict.toUpperCase();
+    const verdict: RiskVerdict = ['UNSAFE', 'SAFE', 'THREAT', 'MALICIOUS', 'VERIFIED SAFE'].includes(normalizedVerdict)
+      ? normalizedVerdict as RiskVerdict : result.score >= 30 ? 'THREAT' : 'SAFE';
+    const severity = result.severity.toUpperCase();
+    const findings: VulnerabilityFlag[] = result.breakdown.length
+      ? result.breakdown.map((description, index) => ({ id: `backend-${index}`, severity: severity === 'CRITICAL' || result.score >= 70 ? 'CRITICAL' : severity === 'WARNING' || result.score >= 30 ? 'WARNING' : 'NOTICE', title: `Risk signal ${index + 1}`, description, icon: result.score >= 70 ? 'warning' : 'info' }))
+      : [{ id: 'backend-no-findings', severity: 'NOTICE', title: 'No rule-based risk signals reported', description: result.final_reason || 'The backend completed its analysis without reporting a specific risk signal.', icon: 'check_circle' }];
+    const finalReason = result.final_reason || result.breakdown.join(' ') || 'The backend completed the contract analysis.';
+    return {
+      id: `scan-${Date.now()}`, symbol: 'CONTRACT', name: 'Analyzed Contract', address, network, verdict,
+      riskScore: Math.max(0, Math.min(100, result.score)), ruleBasedScore: Math.max(0, Math.min(100, result.rule_score ?? result.score)),
+      verdictSource: result.verdict_source === 'rule_based' ? 'Deterministic Rules' : result.verdict_source === 'specialist_ensemble' ? 'Specialist Ensemble' : 'LLM Judge',
+      sourceVerified: false, confidence: 100, timeAgo: 'Just now', timestamp: 'Just now',
+      gasSimulation: 'Not returned by backend', sellTax: 'Not returned by backend', buyTax: 'Not returned by backend', pooledLiquidity: 'Not returned by backend', liquidityStatus: 'Not returned by backend', originDeployer: 'Not returned by backend', deployerAge: 'Not returned by backend', consensusRatio: result.score_source || 'Backend analysis',
+      userPrompt: `Inspect contract ${address} on ${network} Mainnet.`, verdictExplanation: finalReason,
+      executionSteps: [
+        { title: 'Step 1: Contract source fetched.', duration: 'Live', completed: true }, { title: 'Step 2: Rule-based analysis completed.', duration: 'Live', completed: true }, { title: 'Step 3: Specialist analysis completed.', duration: 'Live', completed: true }, { title: 'Step 4: Judge pass completed.', duration: 'Live', completed: true }, { title: 'Step 5: Report generated.', duration: 'Live', completed: true },
+      ], findings, judgeAssessment: finalReason, analysisParameters: result.parameters,
+    };
+  };
 
+  const triggerScanDirect = (address: string, network: EVMNetwork, handlers: AnalysisStreamHandlers) => {
+    const existing = investigations.find((t) => t.address.toLowerCase() === address.toLowerCase());
     if (existing) {
       setActiveToken(existing);
       setCurrentView('scanner');
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      handlers.onResult({ verdict: existing.verdict, severity: '', score: existing.riskScore, rule_score: existing.ruleBasedScore, score_source: '', verdict_source: '', final_reason: existing.verdictExplanation, breakdown: [] });
       return;
     }
-
-    // Heuristically generate a realistic simulation for any new address
-    const cleanAddr = address.trim();
-    const isMockMalicious = !cleanAddr.toLowerCase().includes('420') && !cleanAddr.toLowerCase().includes('940');
-
-    const newInvestigation: TokenInvestigation = {
-      id: 'scan-' + Date.now(),
-      symbol: isMockMalicious ? '$DYNATX' : '$VERIFIED',
-      name: isMockMalicious ? 'Dynamic Tax Trap Protocol' : 'Verified Standard ERC20',
-      address: cleanAddr,
-      network: network,
-      verdict: isMockMalicious ? 'UNSAFE' : 'SAFE',
-      riskScore: isMockMalicious ? 88 : 0,
-      verdictSource: 'LLM Judge',
-      ruleBasedScore: isMockMalicious ? 15 : 0,
-      sourceVerified: true,
-      confidence: 99.1,
-      timeAgo: 'Just now',
-      timestamp: 'Just now',
-      gasSimulation: isMockMalicious
-        ? 'Reverted sell attempt: TRANSFER_RESTRICTED (0xFD)'
-        : 'Clean swap executed: 22,480 gas',
-      sellTax: isMockMalicious ? '45% - 99% Dynamic' : '0.0%',
-      buyTax: isMockMalicious ? '3.5%' : '0.0%',
-      pooledLiquidity: isMockMalicious ? '$28,400 USDC' : '$1,200,000 USDC',
-      liquidityStatus: isMockMalicious ? 'Unlocked (Deployer EOA)' : 'Locked in Protocol TimeLock',
-      originDeployer: '0x' + Array.from({ length: 4 }, () => Math.floor(Math.random() * 16).toString(16)).join('') + '...6045',
-      deployerAge: isMockMalicious ? 'Fresh EOA (1d old)' : 'Established Contract (1y old)',
-      consensusRatio: isMockMalicious ? '3 of 3 LLM specialists voted UNSAFE' : '3 of 3 LLM specialists voted SAFE',
-      userPrompt: `Inspect contract ${cleanAddr} on ${network} Mainnet. Check for anti-whale limits, hidden fee functions, and malicious ownership retention.`,
-      verdictExplanation: isMockMalicious
-        ? 'Dual buy/sell execution failed. Contract uses dynamic sell tax hooks that escalate fees up to 99% for standard non-whitelisted addresses.'
-        : 'Standard OpenZeppelin token standard. Liquidity locked and owner renounced.',
-      transactionBehavior: {
-        realValueTransfers: isMockMalicious ? 14 : 320,
-        zeroValueTransfers: isMockMalicious ? 82 : 2,
-        uniqueSenders: isMockMalicious ? 12 : 280,
-        outboundConcentration: isMockMalicious ? '82% of swap fees funneled to deployer address' : 'Distributed DEX swap topology',
-        contractEthBalance: '~0.00 ETH',
-        note: isMockMalicious ? 'High zero-value transfer count indicates potential transfer event poisoning.' : undefined,
+    const chainByNetwork: Record<EVMNetwork, string> = { Ethereum: 'ethereum', Base: 'base', Arbitrum: 'arbitrum', Optimism: 'optimism', 'BNB Chain': 'bsc', Polygon: 'polygon', Avalanche: 'avalanche' };
+    streamContractAnalysis(address.trim(), chainByNetwork[network], {
+      onProgress: handlers.onProgress,
+      onResult: (result) => {
+        const investigation = createInvestigationFromApiResult(address.trim(), network, result);
+        setInvestigations((previous) => [investigation, ...previous]);
+        setActiveToken(investigation);
+        setUserAccount((previous) => ({ ...previous, freeScansRemaining: Math.max(0, previous.freeScansRemaining - 1), totalScansExecuted: previous.totalScansExecuted + 1 }));
+        setTransactions((previous) => [{ id: `tx-${Date.now()}`, timestamp: 'Just now', operation: 'Contract risk analysis', category: 'service', typeIcon: 'token', amount: '1 Scan', isCredit: false, isFree: true, txHash: 'Backend analysis', settlement: 'Success' }, ...previous]);
+        setCurrentView('scanner');
+        handlers.onResult(result);
       },
-      executionSteps: [
-        { title: `Step 1: Source code & bytecode retrieved from ${network} archive node.`, duration: '128ms', completed: true },
-        { title: `Step 2: Rule-based AST & transfer restriction check completed.`, duration: '310ms', completed: true },
-        { title: `Step 3: Specialist reasoning models analyzed tax mechanics.`, duration: '340ms', completed: true },
-        { title: `Step 4: LLM Judge reconciled findings and elevated risk index.`, duration: '110ms', completed: true },
-        { title: `Step 5: Final evidence audit report generated.`, duration: '85ms', completed: true },
-      ],
-      findings: isMockMalicious
-        ? [
-            {
-              id: 'nf-1',
-              severity: 'CRITICAL',
-              title: 'Honeypot Trap Detected: Non-Whitelisted Sells Revert',
-              description: 'Transaction trace shows opcode 0xFD hit when recipient is DEX router. Transfer function contains hidden whitelist check only deployer can pass.',
-              codeSnippet: `>> if (!isWhitelistedBroker[sender] && recipient == dexPair) revert("TRANSFER_RESTRICTED");`,
-              revertReason: 'TRANSFER_RESTRICTED • Opcode 0xFD reached at instruction PC:0x04F1',
-              icon: 'block'
-            },
-            {
-              id: 'nf-2',
-              severity: 'CRITICAL',
-              title: 'Dynamic Fee Modifier with Uncapped Ceiling',
-              description: 'Deployer can adjust the sell tax to 99% in a single transaction before frontrunning liquidity withdrawal.',
-              icon: 'percent'
-            }
-          ]
-        : [
-            {
-              id: 'nf-safe',
-              severity: 'NOTICE',
-              title: 'Standard ERC20 Architecture Verified',
-              description: 'Zero hidden mints, immutable owner renouncement, and 0% buy/sell fees verified on ephemeral fork.',
-              icon: 'check_circle'
-            }
-          ],
-      decompiledCode: isMockMalicious
-        ? `// [RECONSTRUCTED AST DISPATCH]
-// Target: ${cleanAddr}
-function _transfer(address sender, address recipient, uint256 amount) internal {
-    require(sender != address(0), "ERC20: zero");
-    if (recipient == dexPair && !isWhitelistedBroker[sender]) {
-        revert("TRANSFER_RESTRICTED"); // [TRAP DETECTED]
-    }
-    super._transfer(sender, recipient, amount);
-}`
-        : `// Canonical OpenZeppelin ERC20 Implementation
-function _transfer(address from, address to, uint256 amount) internal override {
-    require(from != address(0), "ERC20: zero address");
-    _balances[from] -= amount;
-    _balances[to] += amount;
-    emit Transfer(from, to, amount);
-}`
-    };
-
-    // Update state & quota
-    setInvestigations([newInvestigation, ...investigations]);
-    setActiveToken(newInvestigation);
-    setUserAccount((prev) => ({
-      ...prev,
-      freeScansRemaining: Math.max(0, prev.freeScansRemaining - 1),
-      freeScansUsed: prev.freeScansUsed + 1,
-      totalScansExecuted: prev.totalScansExecuted + 1,
-    }));
-
-    // Record ledger transaction
-    const newTx: LedgerTransaction = {
-      id: 'tx-' + Date.now(),
-      timestamp: 'Just now',
-      operation: `Scan (${newInvestigation.symbol})`,
-      category: 'service',
-      typeIcon: 'token',
-      amount: '1 Scan',
-      isCredit: false,
-      isFree: true,
-      txHash: '0x' + Math.random().toString(16).slice(2, 10) + '...' + Math.random().toString(16).slice(2, 6),
-      settlement: 'Success',
-    };
-    setTransactions([newTx, ...transactions]);
-
-    setCurrentView('scanner');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+      onError: handlers.onError,
+    });
   };
 
-  const handleStartScan = (address: string, network: EVMNetwork) => {
+  const handleStartScan = (address: string, network: EVMNetwork, handlers?: AnalysisStreamHandlers) => {
     // Access control: users cannot analyze or see the dashboard until they log in or connect wallet
     if (!isWalletConnected) {
       setPendingScan({ address, network });
@@ -194,7 +106,16 @@ function _transfer(address from, address to, uint256 amount) internal override {
       return;
     }
 
-    triggerScanDirect(address, network);
+    // Landing-page scans have no ScannerView handlers yet. Navigate first so
+    // the existing scanner can own and display the live streaming progress.
+    if (!handlers) {
+      setScannerAutoScan({ id: Date.now(), address, network });
+      setCurrentView('scanner');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+
+    triggerScanDirect(address, network, handlers || { onProgress: () => undefined, onResult: () => undefined, onError: () => undefined });
   };
 
   const handleVerifyWorldIdSuccess = () => {
@@ -337,7 +258,10 @@ function _transfer(address from, address to, uint256 amount) internal override {
       const target = pendingScan;
       setPendingScan(null);
       setWalletModalPrompt(undefined);
-      triggerScanDirect(target.address, target.network);
+      setIsWalletModalOpen(false);
+      setScannerAutoScan({ id: Date.now(), address: target.address, network: target.network });
+      setCurrentView('scanner');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     } else {
       setWalletModalPrompt(undefined);
     }
@@ -414,6 +338,8 @@ function _transfer(address from, address to, uint256 amount) internal override {
               window.scrollTo({ top: 0, behavior: 'smooth' });
             }}
             onRunScan={handleStartScan}
+            autoScanRequest={scannerAutoScan}
+            onAutoScanRequestHandled={() => setScannerAutoScan(null)}
             userAccount={userAccount}
             onOpenBytecodeModal={(code, title) => {
               setBytecodeModal({ isOpen: true, code, title });

@@ -29,17 +29,20 @@ from core.analyzer import analyze
 
 app = FastAPI(title="RiskSearcher API")
 
-# CORS: allow the deployed Vercel frontend and local dev.
-# Add any additional frontend origins here as they come up (custom domain, etc).
+# CORS: allow the deployed Vercel frontend, its preview deployments, and local dev.
+# The preview regex is intentionally limited to this project; do not use a
+# wildcard origin because this API permits credentials.
 ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:5173",  # default Vite dev port
     "https://risksearcher.vercel.app",
 ]
+VERCEL_PREVIEW_ORIGIN_REGEX = r"^https://risksearcher-[a-z0-9-]+\.vercel\.app$"
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=VERCEL_PREVIEW_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
