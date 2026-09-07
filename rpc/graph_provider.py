@@ -100,12 +100,30 @@ def get_token_liquidity_data(token_address: str, chain: str) -> dict:
             print(f"    [GRAPH] No Uniswap V3 token data for {token_address}")
             return _no_data(token_address, chain_name, "token_not_found")
 
+        token0_pools = data.get("token0Pools") or []
+        token1_pools = data.get("token1Pools") or []
         pools_by_id = {
             pool.get("id"): pool
-            for pool in (data.get("token0Pools") or []) + (data.get("token1Pools") or [])
+            for pool in token0_pools + token1_pools
             if pool.get("id")
         }
         pools = list(pools_by_id.values())
+        token_pool_count = int(token.get("poolCount") or 0)
+
+        # Diagnostic: the pools(where: {token0/token1: $token}) sub-queries and
+        # the token's own poolCount field are two independent reads. If they
+        # disagree (e.g. poolCount > 0 but pools returned nothing, or vice
+        # versa), that disagreement is itself the signal worth seeing on the
+        # next live run - print it explicitly rather than silently picking one.
+        if token_pool_count != len(pools):
+            print(
+                f"    [GRAPH][DIAGNOSTIC] Mismatch for {normalized_address}: "
+                f"token.poolCount={token_pool_count}, token0Pools={len(token0_pools)}, "
+                f"token1Pools={len(token1_pools)}, merged pools={len(pools)}. "
+                "This is not yet root-caused against the live Gateway - treat "
+                "pool_count/volume/age below as unverified if this line appears."
+            )
+
         first_swaps = [int(swap["timestamp"]) for pool in pools for swap in (pool.get("swaps") or []) if swap.get("timestamp")]
         volume_24h = 0.0
         volume_7d = 0.0
@@ -118,18 +136,35 @@ def get_token_liquidity_data(token_address: str, chain: str) -> dict:
                 if day_timestamp >= now - 86400:
                     volume_24h += volume
 
+        total_liquidity_usd = _as_float(token.get("totalValueLockedUSD"))
+        # A pool count of zero next to real, nonzero TVL is internally
+        # contradictory - a token can't have liquidity locked in zero pools.
+        # Rather than hand the specialist/report a confident-looking "0 pools"
+        # that isn't actually trustworthy, mark those specific sub-fields as
+        # unavailable so they aren't reasoned over as if verified.
+        pools_data_reliable = not (total_liquidity_usd > 0 and len(pools) == 0 and token_pool_count == 0)
+
         result = {
             "source": "the_graph_uniswap_v3",
             "token_address": normalized_address,
             "chain": "ethereum",
             "no_data": False,
-            "reason": "",
-            "total_liquidity_usd": _as_float(token.get("totalValueLockedUSD")),
-            "first_swap_timestamp": min(first_swaps) if first_swaps else None,
-            "recent_swap_volume_usd": {"24h": volume_24h, "7d": volume_7d},
-            "pool_count": int(token.get("poolCount") or len(pools)),
+            "reason": "" if pools_data_reliable else "pool_level_data_unavailable",
+            "total_liquidity_usd": total_liquidity_usd,
+            "first_swap_timestamp": min(first_swaps) if first_swaps and pools_data_reliable else None,
+            "recent_swap_volume_usd": (
+                {"24h": volume_24h, "7d": volume_7d}
+                if pools_data_reliable
+                else {"24h": None, "7d": None}
+            ),
+            "pool_count": max(token_pool_count, len(pools)),
+            "pools_data_reliable": pools_data_reliable,
         }
-        print(f"    [GRAPH] Fetched Uniswap V3 liquidity evidence: {result['pool_count']} pool(s), ${result['total_liquidity_usd']:,.2f} TVL")
+        print(
+            f"    [GRAPH] Fetched Uniswap V3 liquidity evidence: {result['pool_count']} pool(s), "
+            f"${result['total_liquidity_usd']:,.2f} TVL"
+            + ("" if pools_data_reliable else " (pool-level detail unavailable this run - see diagnostic above)")
+        )
         return result
     except Exception as exc:
         print(f"    [GRAPH] Query failed for {token_address}: {exc}")
