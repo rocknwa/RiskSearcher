@@ -21,6 +21,7 @@ def render_markdown_report(result) -> str:
         "- Bytecode scan: ran",
         f"- Source scan: {'ran (verified source)' if result.source_verified else 'did not run (contract source is unverified)'}",
         "- Behavioral analysis: ran",
+        f"- The Graph / Uniswap V3 liquidity evidence: {'unavailable (' + (result.graph_evidence or {}).get('reason', 'no data') + ')' if (result.graph_evidence or {}).get('no_data', True) else 'fetched live'}",
     ]
     if specialist_response:
         layers.append("- LLM specialist: ran (token-risk specialist — balance/access-control, liquidity, mint privilege, trading controls, upgradeability, ownership, and honeypot/sell-blocking patterns)")
@@ -80,6 +81,21 @@ def render_markdown_report(result) -> str:
                 lines.append(f"  {item['detail']}")
     else:
         lines.append("- None detected")
+
+    lines.extend(["", "## The Graph liquidity evidence", ""])
+    graph = result.graph_evidence or {}
+    if graph and not graph.get("no_data", True):
+        volumes = graph.get("recent_swap_volume_usd") or {}
+        lines.extend([
+            "- **Source:** The Graph — Uniswap V3 Ethereum mainnet subgraph",
+            f"- **Pool count:** {graph.get('pool_count', 0)}",
+            f"- **Total liquidity (USD):** ${float(graph.get('total_liquidity_usd') or 0):,.2f}",
+            f"- **First observed swap timestamp:** {graph.get('first_swap_timestamp') or 'not available'}",
+            f"- **Recent swap volume:** ${float(volumes.get('24h') or 0):,.2f} (24h); ${float(volumes.get('7d') or 0):,.2f} (7d)",
+            "- **Verdict use:** The token-risk specialist was instructed to assess liquidity depth, pool age, and volume/liquidity mismatches as legitimacy signals.",
+        ])
+    else:
+        lines.append(f"- Unavailable this run: {graph.get('reason', 'no Graph data returned')}. This was not treated as a safety signal.")
 
     lines.extend(["", "## Similar known-scam matches", ""])
     if result.similar_scams:
