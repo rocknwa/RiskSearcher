@@ -296,7 +296,19 @@ def _call_groq(prompt: str, model: str = "openai/gpt-oss-120b", timeout: int = 6
     payload = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
+        # GPT-OSS models on Groq write chain-of-thought to a separate
+        # `reasoning` field and only emit the final answer in `content`
+        # once reasoning is done. With the default reasoning_effort
+        # ("medium") and no explicit token cap, a long specialist prompt
+        # can burn the whole completion budget on hidden reasoning and
+        # never reach visible content — the same "thinking-only, no text"
+        # failure mode already hit and fixed for AgentRouter. Keep
+        # reasoning light and give the visible answer a generous,
+        # explicit budget instead.
+        "max_completion_tokens": 8192,
     }
+    if model.startswith("openai/gpt-oss"):
+        payload["reasoning_effort"] = "low"
     try:
         r = requests.post(url, headers=headers, json=payload, timeout=timeout)
         if r.status_code == 401:
