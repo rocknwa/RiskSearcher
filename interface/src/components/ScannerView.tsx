@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { TokenInvestigation, EVMNetwork, UserAccountState } from '../types';
+import { AnalysisStreamHandlers, TokenInvestigation, EVMNetwork, UserAccountState } from '../types';
 
 interface ScannerViewProps {
   investigations: TokenInvestigation[];
   activeToken: TokenInvestigation;
   onSelectToken: (token: TokenInvestigation) => void;
-  onRunScan: (address: string, network: EVMNetwork) => void;
+  onRunScan: (address: string, network: EVMNetwork, handlers: AnalysisStreamHandlers) => void;
   userAccount: UserAccountState;
   onOpenBytecodeModal: (code: string, title: string) => void;
   onOpenAddFundsModal: () => void;
@@ -35,6 +35,8 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
   const [selectedNetwork, setSelectedNetwork] = useState<EVMNetwork>(activeToken.network || 'Ethereum');
   const [isScanning, setIsScanning] = useState(false);
   const [scanCurrentStage, setScanCurrentStage] = useState(1);
+  const [scanProgressMessage, setScanProgressMessage] = useState('[1/5] Fetching contract source...');
+  const [scanError, setScanError] = useState<string | null>(null);
   const [isReSimulating, setIsReSimulating] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedAudit, setCopiedAudit] = useState(false);
@@ -80,24 +82,20 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
 
     setIsScanning(true);
     setScanCurrentStage(1);
-
-    // Simulate 5 sequential stages
-    const timer1 = setTimeout(() => setScanCurrentStage(2), 400);
-    const timer2 = setTimeout(() => setScanCurrentStage(3), 800);
-    const timer3 = setTimeout(() => setScanCurrentStage(4), 1200);
-    const timer4 = setTimeout(() => setScanCurrentStage(5), 1500);
-    const timer5 = setTimeout(() => {
-      setIsScanning(false);
-      onRunScan(inputAddress.trim(), selectedNetwork);
-    }, 1800);
-
-    return () => {
-      clearTimeout(timer1);
-      clearTimeout(timer2);
-      clearTimeout(timer3);
-      clearTimeout(timer4);
-      clearTimeout(timer5);
-    };
+    setScanProgressMessage('[1/5] Fetching contract source...');
+    setScanError(null);
+    onRunScan(inputAddress.trim(), selectedNetwork, {
+      onProgress: ({ message }) => {
+        setScanProgressMessage(message);
+        const stage = /^\[(\d)\/5\]/.exec(message)?.[1];
+        if (stage) setScanCurrentStage(Number(stage));
+      },
+      onResult: () => setIsScanning(false),
+      onError: (message) => {
+        setIsScanning(false);
+        setScanError(message);
+      },
+    });
   };
 
   const handleSelectDemoToken = (id: string) => {
@@ -539,6 +537,7 @@ Generated via RiskSearcher Multi-Judge SEC-KERNEL`;
                   </div>
 
                   <div className="space-y-2 font-mono text-xs">
+                    <p className="text-[#adc6ff] pb-1">{scanProgressMessage}</p>
                     <div className={`flex items-center gap-2 ${scanCurrentStage >= 1 ? 'text-[#4edea3]' : 'text-[#8c909f]'}`}>
                       <span className="material-symbols-outlined text-[16px]">
                         {scanCurrentStage > 1 ? 'check_circle' : 'radio_button_checked'}
@@ -589,6 +588,18 @@ Generated via RiskSearcher Multi-Judge SEC-KERNEL`;
                       </div>
                     ))}
                   </div>
+                </div>
+              )}
+
+              {scanError && (
+                <div className="bg-[#93000a]/20 p-4 rounded-xl border border-[#ffb4ab]/40 space-y-2">
+                  <div className="flex items-start gap-2 text-[#ffb4ab] font-mono text-xs">
+                    <span className="material-symbols-outlined text-[18px]">error</span>
+                    <span>{scanError}</span>
+                  </div>
+                  <button type="button" onClick={() => handleFormSubmit({ preventDefault: () => undefined } as React.FormEvent)} className="text-xs font-mono font-bold text-[#00285d] bg-[#ffb4ab] hover:bg-[#ffdad6] px-3 py-1.5 rounded-lg">
+                    Retry analysis
+                  </button>
                 </div>
               )}
 
