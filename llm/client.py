@@ -206,7 +206,7 @@ def _call_anthropic(prompt: str, model: str = "claude-2", timeout: int = 20) -> 
         raise LLMError(f"Anthropic call failed: {e}")
 
 
-def _call_openrouter(prompt: str, model: str = "meta-llama/llama-3.3-70b-instruct:free", timeout: int = 60) -> str:
+def _call_openrouter(prompt: str, model: str = "openrouter/free", timeout: int = 60) -> str:
     """Call OpenRouter's OpenAI-compatible chat completions API.
 
     Requires OPENROUTER_API_KEY in env. Uses plain requests (already a
@@ -436,8 +436,7 @@ def run_specialist(specialist_id: str, prompt: str, *, timeout: int = 30) -> dic
         print("[LLM CLIENT] INFO: OPENROUTER_API_KEY not set; skipping OpenRouter")
     else:
         for model_name in (
-            "meta-llama/llama-3.3-70b-instruct:free",
-            "deepseek/deepseek-r1:free",
+            "openrouter/free",
         ):
             print(f"[LLM] Trying OpenRouter ({model_name})...")
             try:
@@ -583,8 +582,7 @@ def run_judge(rule_findings: dict, specialist_findings: str, *, address: str = "
         print("[LLM CLIENT] INFO: OPENROUTER_API_KEY not set; skipping judge via OpenRouter")
     else:
         for model_name in (
-            "meta-llama/llama-3.3-70b-instruct:free",
-            "deepseek/deepseek-r1:free",
+            "openrouter/free",
         ):
             try:
                 resp = _call_openrouter(judge_prompt, model=model_name, timeout=60)
