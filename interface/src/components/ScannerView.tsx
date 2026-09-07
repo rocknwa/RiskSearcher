@@ -70,12 +70,17 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
   );
 
   const startScan = (address: string, network: EVMNetwork, skipScannerGates = false) => {
-    if (!address.trim()) return;
-    if (!skipScannerGates && !userAccount.isWorldIdVerified) {
+    if (!address.trim() || isScanning) return;
+    const isCompletedHistoryTarget = investigations.some(
+      (item) => item.address.toLowerCase() === address.trim().toLowerCase() && item.network === network && !item.isAnalyzing,
+    );
+    // Previous results, including seeded/mock history, are never terminal:
+    // reanalysis always fetches current evidence once the previous run ended.
+    if (!skipScannerGates && !isCompletedHistoryTarget && !userAccount.isWorldIdVerified) {
       onOpenWorldIdModal();
       return;
     }
-    if (!skipScannerGates && userAccount.freeScansRemaining <= 0 && !userAccount.activeSubscription && userAccount.riskSearcherBalance <= 0) {
+    if (!skipScannerGates && !isCompletedHistoryTarget && userAccount.freeScansRemaining <= 0 && !userAccount.activeSubscription && userAccount.riskSearcherBalance <= 0) {
       onOpenSubscriptionModal();
       return;
     }
@@ -989,7 +994,8 @@ Generated via RiskSearcher Multi-Judge SEC-KERNEL`;
                   <button
                     type="submit"
                     disabled={isScanning}
-                    className="bg-[#4d8eff] hover:bg-[#adc6ff] text-[#00285d] hover:text-[#002e6a] px-4 py-2 rounded-lg font-semibold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-all active:scale-[0.99] shadow-sm shrink-0 w-full sm:w-auto"
+                    title={isScanning ? 'Analysis in progress' : 'Run a fresh analysis, even for a completed history entry'}
+                    className="bg-[#4d8eff] hover:bg-[#adc6ff] disabled:cursor-not-allowed disabled:opacity-70 text-[#00285d] hover:text-[#002e6a] px-4 py-2 rounded-lg font-semibold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-all active:scale-[0.99] shadow-sm shrink-0 w-full sm:w-auto"
                   >
                     {isScanning ? (
                       <>
