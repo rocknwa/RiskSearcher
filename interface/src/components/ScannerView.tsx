@@ -603,6 +603,23 @@ Generated via RiskSearcher Multi-Judge SEC-KERNEL`;
                 </div>
               )}
 
+              {activeToken.analysisParameters && Object.keys(activeToken.analysisParameters).length > 0 && (
+                <div className="bg-[#060e20] p-4 rounded-xl border border-[#222a3d] space-y-2">
+                  <h3 className="font-semibold text-sm text-[#dae2fd] flex items-center gap-2">
+                    <span className="material-symbols-outlined text-[#4cd7f6] text-[18px]">tune</span>
+                    <span>Analysis Parameters</span>
+                  </h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 font-mono text-xs">
+                    {Object.entries(activeToken.analysisParameters).map(([key, value]) => (
+                      <div key={key} className="bg-[#131b2e] px-3 py-2 rounded-lg border border-[#222a3d]">
+                        <span className="text-[#8c909f]">{key}: </span>
+                        <span className="text-[#dae2fd] break-all">{typeof value === 'string' ? value : JSON.stringify(value)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Forensic Report Card */}
               <div className="bg-[#171f33] p-5 lg:p-6 rounded-xl border border-[#222a3d] space-y-5 shadow-xl">
                 {/* Top Verdict Banner & Score Comparison */}

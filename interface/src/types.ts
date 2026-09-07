@@ -84,6 +84,7 @@ export interface TokenInvestigation {
   isAnalyzing?: boolean;
   userPrompt?: string;
   verdictExplanation: string;
+  analysisParameters?: Record<string, unknown>;
   executionSteps: {
     title: string;
     duration: string;
