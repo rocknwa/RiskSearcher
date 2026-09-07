@@ -21,6 +21,8 @@ import os
 import re
 import time
 import traceback
+
+import requests
 from pathlib import Path
 from typing import Optional
 
@@ -204,6 +206,56 @@ def _call_anthropic(prompt: str, model: str = "claude-2", timeout: int = 20) -> 
         raise LLMError(f"Anthropic call failed: {e}")
 
 
+def _call_openrouter(prompt: str, model: str = "meta-llama/llama-3.3-70b-instruct:free", timeout: int = 60) -> str:
+    """Call OpenRouter's OpenAI-compatible chat completions API.
+
+    Requires OPENROUTER_API_KEY in env. Uses plain requests (already a
+    dependency) rather than the openai SDK — deliberately avoiding adding a
+    new SDK dependency, given the anthropic SDK's streaming internals were
+    the source of a real bug earlier in this project's history.
+
+    Added as a more cloud-deployment-reliable alternative to AgentRouter,
+    which was confirmed (via direct diagnostic logging) to receive zero
+    raw response events when called from Render's hosting environment —
+    a network-level issue, not something fixable in this codebase.
+    """
+    if _simulate("openrouter"):
+        raise LLMError("Simulated OpenRouter rate-limit")
+
+    key = os.environ.get("OPENROUTER_API_KEY")
+    if not key:
+        raise LLMError("No OpenRouter key")
+
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    try:
+        r = requests.post(url, headers=headers, json=payload, timeout=timeout)
+        if r.status_code == 401:
+            raise LLMError(f"OpenRouter authentication failed: HTTP 401: {r.text[:300]}")
+        if r.status_code == 429:
+            raise LLMError("OpenRouter rate-limited")
+        if 500 <= r.status_code < 600:
+            raise LLMError(f"OpenRouter server error: {r.status_code}")
+        r.raise_for_status()
+        data = r.json()
+        choices = data.get("choices") or []
+        if not choices:
+            raise LLMError(f"OpenRouter returned no choices: {data}")
+        content = (choices[0].get("message") or {}).get("content") or ""
+        return content
+    except LLMError:
+        raise
+    except Exception as e:
+        raise LLMError(f"OpenRouter call failed: [{type(e).__name__}] {e!r}")
+
+
 def _call_agentrouter(prompt: str, model: str = "anthropic/claude-2", timeout: int = 20) -> str:
     if _simulate("agentrouter"):
         raise LLMError("Simulated AgentRouter rate-limit")
@@ -370,6 +422,48 @@ def run_specialist(specialist_id: str, prompt: str, *, timeout: int = 30) -> dic
                 print(f"[LLM CLIENT] INFO: Anthropic transient failure: {msg}; falling back")
 
     sim = _get_sim_env()
+    if sim and "openrouter-canned" in sim:
+        return {
+            "backend": "openrouter",
+            "provider": "openrouter",
+            "model": "openrouter-canned",
+            "response": "[SIMULATED OpenRouter response] Detailed analysis: ...",
+            "error": None,
+            "_simulated": True,
+        }
+
+    if not os.environ.get("OPENROUTER_API_KEY"):
+        print("[LLM CLIENT] INFO: OPENROUTER_API_KEY not set; skipping OpenRouter")
+    else:
+        for model_name in (
+            "meta-llama/llama-3.3-70b-instruct:free",
+            "deepseek/deepseek-r1:free",
+        ):
+            print(f"[LLM] Trying OpenRouter ({model_name})...")
+            try:
+                resp = _call_openrouter(prompt, model=model_name, timeout=timeout)
+                text = resp if isinstance(resp, str) else _extract_text_from_response(resp)
+                if not text:
+                    raise LLMError("OpenRouter returned no visible text")
+                print(f"[LLM] Trying OpenRouter ({model_name})... success")
+                return {
+                    "backend": "openrouter",
+                    "provider": "openrouter",
+                    "model": model_name,
+                    "response": text,
+                    "error": None,
+                    "_simulated": False,
+                }
+            except LLMError as e:
+                msg = str(e)
+                err = err + "; " + msg if err else msg
+                print(f"[LLM] Trying OpenRouter ({model_name})... failed: {msg}")
+                if any(t in msg.lower() for t in ("401", "unauthor", "invalid", "authentication")):
+                    print(f"[LLM CLIENT] WARNING: OpenRouter authentication failed for model {model_name}; trying next model")
+                else:
+                    print(f"[LLM CLIENT] INFO: OpenRouter model {model_name} failed transiently: {msg}; trying next model")
+
+    sim = _get_sim_env()
     if sim and "agentrouter-canned" in sim:
         return {
             "backend": "agentrouter",
@@ -454,6 +548,8 @@ def run_judge(rule_findings: dict, specialist_findings: str, *, address: str = "
                 resp = _call_anthropic(judge_prompt, model=model, timeout=30)
             elif provider == "agentrouter":
                 resp = _call_agentrouter(judge_prompt, model=model, timeout=30)
+            elif provider == "openrouter":
+                resp = _call_openrouter(judge_prompt, model=model, timeout=60)
             else:
                 raise LLMError(f"Unsupported provider for judge: {provider}")
             text = resp if isinstance(resp, str) else _extract_text_from_response(resp)
@@ -482,6 +578,23 @@ def run_judge(rule_findings: dict, specialist_findings: str, *, address: str = "
                     return {**parsed, "backend": "anthropic", "provider": "anthropic", "model": model_name, "error": None, "_simulated": False}
         except LLMError as e:
             err = str(e)
+
+    if not os.environ.get("OPENROUTER_API_KEY"):
+        print("[LLM CLIENT] INFO: OPENROUTER_API_KEY not set; skipping judge via OpenRouter")
+    else:
+        for model_name in (
+            "meta-llama/llama-3.3-70b-instruct:free",
+            "deepseek/deepseek-r1:free",
+        ):
+            try:
+                resp = _call_openrouter(judge_prompt, model=model_name, timeout=60)
+                text = resp if isinstance(resp, str) else _extract_text_from_response(resp)
+                if text:
+                    parsed = _parse_judge_response(text)
+                    if parsed:
+                        return {**parsed, "backend": "openrouter", "provider": "openrouter", "model": model_name, "error": None, "_simulated": False}
+            except LLMError as e:
+                err = str(e)
 
     if not os.environ.get("AGENTROUTER_API_KEY"):
         print("[LLM CLIENT] INFO: AGENTROUTER_API_KEY not set; skipping judge via AgentRouter")
