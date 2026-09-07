@@ -49,6 +49,37 @@ class GraphProviderTests(unittest.TestCase):
         self.assertEqual(result["recent_swap_volume_usd"], {"24h": 12.5, "7d": 137.5})
         self.assertIn("gateway.thegraph.com", post.call_args.args[0])
         self.assertEqual(post.call_args.kwargs["json"]["variables"]["token"], self.token.lower())
+        self.assertTrue(result["pools_data_reliable"])
+
+    @patch.dict(os.environ, {"GRAPH_API_KEY": "test-key"}, clear=False)
+    @patch("rpc.graph_provider.time.time", return_value=1_700_000_000)
+    @patch("rpc.graph_provider.requests.post")
+    def test_nonzero_tvl_with_zero_pools_is_marked_unreliable(self, post, _time):
+        # Reproduces the observed live case: token.totalValueLockedUSD is
+        # nonzero and token.poolCount is 0, and the pools() sub-queries also
+        # return empty arrays. That combination is internally contradictory,
+        # so pool-level fields must be marked unavailable, not confirmed zero.
+        response = Mock()
+        response.json.return_value = {
+            "data": {
+                "token": {"totalValueLockedUSD": "46110367.30", "poolCount": "0"},
+                "token0Pools": [],
+                "token1Pools": [],
+            }
+        }
+        post.return_value = response
+
+        result = get_token_liquidity_data(self.token, "ethereum")
+
+        self.assertFalse(result["no_data"])
+        self.assertFalse(result["pools_data_reliable"])
+        self.assertEqual(result["reason"], "pool_level_data_unavailable")
+        self.assertEqual(result["total_liquidity_usd"], 46110367.30)
+        self.assertIsNone(result["first_swap_timestamp"])
+        self.assertEqual(result["recent_swap_volume_usd"], {"24h": None, "7d": None})
+        # pool_count reflects the max of both independent reads (both 0 here),
+        # not silently trusted from a single source.
+        self.assertEqual(result["pool_count"], 0)
 
     @patch.dict(os.environ, {"GRAPH_API_KEY": ""}, clear=False)
     @patch("rpc.graph_provider.requests.post")
