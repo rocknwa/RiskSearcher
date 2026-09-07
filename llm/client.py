@@ -288,6 +288,25 @@ def _call_groq(prompt: str, model: str = "openai/gpt-oss-120b", timeout: int = 6
     if not key:
         raise LLMError("No Groq key")
 
+    # Groq's free tier for the GPT-OSS models caps at ~8,000 tokens per
+    # MINUTE, and it rejects with 413 the instant a single request alone
+    # exceeds that — no amount of retrying gets around it, since the
+    # request can never fit in the window regardless of other traffic.
+    # Input tokens and the requested completion budget both count against
+    # the same ceiling, so keep max_completion_tokens modest and bail out
+    # early (no network round-trip) once the prompt alone is too big to
+    # ever fit — that's a real Groq free-tier limit, not a bug, and the
+    # caller's fallback chain will move on to the next tier either way.
+    GROQ_FREE_TIER_TPM = 8000
+    MAX_COMPLETION_TOKENS = 3000
+    prompt_tokens_est = len(prompt) // 4
+    if prompt_tokens_est + MAX_COMPLETION_TOKENS > GROQ_FREE_TIER_TPM:
+        raise LLMError(
+            f"Prompt too large for Groq free tier (~{prompt_tokens_est} input tokens "
+            f"+ {MAX_COMPLETION_TOKENS} completion tokens exceeds the ~{GROQ_FREE_TIER_TPM} "
+            "TPM free-tier ceiling); skipping without a network call"
+        )
+
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {key}",
@@ -303,9 +322,9 @@ def _call_groq(prompt: str, model: str = "openai/gpt-oss-120b", timeout: int = 6
         # can burn the whole completion budget on hidden reasoning and
         # never reach visible content — the same "thinking-only, no text"
         # failure mode already hit and fixed for AgentRouter. Keep
-        # reasoning light and give the visible answer a generous,
-        # explicit budget instead.
-        "max_completion_tokens": 8192,
+        # reasoning light and the completion budget modest — see the
+        # free-tier TPM guard above for why this can't just be raised.
+        "max_completion_tokens": MAX_COMPLETION_TOKENS,
     }
     if model.startswith("openai/gpt-oss"):
         payload["reasoning_effort"] = "low"
@@ -315,6 +334,8 @@ def _call_groq(prompt: str, model: str = "openai/gpt-oss-120b", timeout: int = 6
             raise LLMError(f"Groq authentication failed: HTTP 401: {r.text[:300]}")
         if r.status_code == 429:
             raise LLMError(f"Groq rate-limited: {r.text[:300]}")
+        if r.status_code == 413:
+            raise LLMError(f"Groq: request too large for free-tier TPM limit: {r.text[:300]}")
         if 500 <= r.status_code < 600:
             raise LLMError(f"Groq server error: {r.status_code}")
         r.raise_for_status()
