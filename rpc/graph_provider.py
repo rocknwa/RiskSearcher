@@ -37,6 +37,12 @@ query TokenLiquidity($token: String!, $since7d: Int!) {
       volumeUSD
     }
   }
+  token0PoolIds: pools(first: 1000, where: {token0: $token}) {
+    id
+  }
+  token1PoolIds: pools(first: 1000, where: {token1: $token}) {
+    id
+  }
 }
 """
 
@@ -107,40 +113,36 @@ def get_token_liquidity_data(token_address: str, chain: str) -> dict:
             for pool in token0_pools + token1_pools
             if pool.get("id")
         }
+        # `pools` (above) is the capped, TVL-ordered, nested-data set used
+        # only for the volume/age approximation below - it maxes out at 100
+        # regardless of how many pools actually exist (see the query's cap).
+        # For the *count* itself, use the separate ID-only sub-queries instead,
+        # which aren't capped in any way that matters (up to 1000, cheap
+        # because they carry no nested swap/day data) - using the capped list
+        # here would silently report 100 as the pool count for any token that
+        # actually has more than that, which is exactly the bug this fixes.
         pools = list(pools_by_id.values())
+        all_pool_ids = {
+            pool.get("id")
+            for pool in (data.get("token0PoolIds") or []) + (data.get("token1PoolIds") or [])
+            if pool.get("id")
+        }
+        real_pool_count = len(all_pool_ids)
         token_pool_count = int(token.get("poolCount") or 0)
 
-        # Diagnostic: the pools(where: {token0/token1: $token}) sub-queries are
-        # capped at 50-per-side (ordered by TVL desc) to keep the query fast
-        # for high-liquidity tokens with hundreds of real pools (a token with
-        # >100 pools legitimately returning fewer than token.poolCount here is
-        # expected sampling, not a bug). Only flag a genuine anomaly: the
-        # token claims fewer pools than we actually fetched, or it claims
-        # pools exist but the sub-queries found none, or it's under the cap
-        # yet still doesn't match what we fetched.
-        POOL_FETCH_CAP = 100  # 50 per side (token0 + token1)
-        if token_pool_count == 0 and len(pools) > 0:
+        # Diagnostic: token.poolCount and the ID-only enumeration are two
+        # independent reads of the same thing and should agree exactly (the
+        # ID-only queries aren't capped in any way that would explain a
+        # legitimate difference, unlike the nested-data `pools` list above).
+        # If they disagree, that's a genuine data-quality signal worth seeing.
+        if token_pool_count != real_pool_count:
             print(
                 f"    [GRAPH][DIAGNOSTIC] Mismatch for {normalized_address}: "
-                f"token.poolCount=0 but {len(pools)} pool(s) were found. "
-                "This is not yet root-caused against the live Gateway - treat "
-                "pool_count/volume/age below as unverified if this line appears."
+                f"token.poolCount={token_pool_count} but ID-only enumeration found "
+                f"{real_pool_count} pool(s). This is not yet root-caused against the "
+                "live Gateway - treat pool_count below as unverified if this line appears."
             )
-        elif 0 < token_pool_count < len(pools):
-            print(
-                f"    [GRAPH][DIAGNOSTIC] Mismatch for {normalized_address}: "
-                f"token.poolCount={token_pool_count} but {len(pools)} pool(s) were found. "
-                "This is not yet root-caused against the live Gateway - treat "
-                "pool_count/volume/age below as unverified if this line appears."
-            )
-        elif 0 < token_pool_count <= POOL_FETCH_CAP and token_pool_count != len(pools):
-            print(
-                f"    [GRAPH][DIAGNOSTIC] Mismatch for {normalized_address}: "
-                f"token.poolCount={token_pool_count}, token0Pools={len(token0_pools)}, "
-                f"token1Pools={len(token1_pools)}, merged pools={len(pools)}. "
-                "This is not yet root-caused against the live Gateway - treat "
-                "pool_count/volume/age below as unverified if this line appears."
-            )
+
 
         first_swaps = [int(swap["timestamp"]) for pool in pools for swap in (pool.get("swaps") or []) if swap.get("timestamp")]
         # Note: for tokens with more than 100 real pools, `pools` only holds
@@ -171,7 +173,7 @@ def get_token_liquidity_data(token_address: str, chain: str) -> dict:
         # Rather than hand the specialist/report a confident-looking "0 pools"
         # that isn't actually trustworthy, mark those specific sub-fields as
         # unavailable so they aren't reasoned over as if verified.
-        pools_data_reliable = not (total_liquidity_usd > 0 and len(pools) == 0 and token_pool_count == 0)
+        pools_data_reliable = not (total_liquidity_usd > 0 and real_pool_count == 0 and token_pool_count == 0)
 
         result = {
             "source": "the_graph_uniswap_v3",
@@ -186,7 +188,7 @@ def get_token_liquidity_data(token_address: str, chain: str) -> dict:
                 if pools_data_reliable
                 else {"24h": None, "7d": None}
             ),
-            "pool_count": max(token_pool_count, len(pools)),
+            "pool_count": max(token_pool_count, real_pool_count),
             "pools_data_reliable": pools_data_reliable,
         }
         print(
