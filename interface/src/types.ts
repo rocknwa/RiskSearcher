@@ -23,6 +23,7 @@ export interface GraphEvidence {
   first_swap_timestamp: number | null;
   recent_swap_volume_usd: { '24h': number | null; '7d': number | null };
   pool_count: number;
+  pool_count_exact?: boolean;
   pools_data_reliable?: boolean;
 }
 
