@@ -794,7 +794,7 @@ Generated via RiskSearcher Multi-Judge SEC-KERNEL`;
                         <span className="text-base font-bold text-[#dae2fd] block mt-0.5">
                           {activeToken.graphEvidence.pools_data_reliable === false
                             ? '—'
-                            : activeToken.graphEvidence.pool_count.toLocaleString()}
+                            : `${activeToken.graphEvidence.pool_count.toLocaleString()}${activeToken.graphEvidence.pool_count_exact === false ? '+' : ''}`}
                         </span>
                         <span className="text-[10px] text-[#8c909f]">Uniswap V3 pairs</span>
                       </div>
