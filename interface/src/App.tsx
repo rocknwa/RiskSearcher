@@ -68,6 +68,7 @@ export default function App() {
       executionSteps: [
         { title: 'Step 1: Contract source fetched.', duration: 'Live', completed: true }, { title: 'Step 2: Rule-based analysis completed.', duration: 'Live', completed: true }, { title: 'Step 3: Specialist analysis completed.', duration: 'Live', completed: true }, { title: 'Step 4: Judge pass completed.', duration: 'Live', completed: true }, { title: 'Step 5: Report generated.', duration: 'Live', completed: true },
       ], findings, judgeAssessment: finalReason, analysisParameters: result.parameters,
+      graphEvidence: result.graph_evidence ?? undefined,
     };
   };
 
