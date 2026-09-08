@@ -20,7 +20,7 @@ from typing import Callable
 from rpc.graph_provider import get_token_liquidity_data
 from rpc.provider import get_contract_context, get_transfer_history, get_source_code
 from core.rules import scan_bytecode, scan_source
-from core.scoring import compute_score
+from core.scoring import compute_score, THREAT_THRESHOLD
 from core.tx_analysis import analyze_transactions
 from db.vector_store import retrieve_similar
 from llm.ollama import analyze_contract
@@ -395,13 +395,19 @@ def analyze(
         judge_result = {"verdict": "", "severity": "", "reason": "", "error": str(exc), "backend": "none"}
 
     if judge_result.get("verdict") and judge_result.get("reason"):
-        final_verdict = judge_result["verdict"]
         final_severity = judge_result.get("severity") or scoring["severity"]
         final_reason = judge_result["reason"]
         if judge_result.get("score") is not None:
             final_score = int(judge_result["score"])
         else:
             final_score = _severity_to_score(final_severity)
+        # Deliberately NOT judge_result["verdict"] — see _severity_to_verdict's
+        # docstring. The judge's own verdict token is untrusted free-text and
+        # has shipped self-contradictory (e.g. verdict="threat" alongside
+        # severity="low" and a "reason" arguing the token is safe). Deriving
+        # verdict from the resolved score via the same THREAT_THRESHOLD the
+        # rule scorer uses guarantees the two can never disagree.
+        final_verdict = "threat" if final_score >= THREAT_THRESHOLD else "safe"
         score_source = "llm_judge"
         verdict_source = "llm_judge"
         judge_error = ""
@@ -461,16 +467,24 @@ def analyze(
 
 
 def _severity_to_score(severity: str | None) -> int:
+    # Boundaries must agree with core/scoring.py's own score->severity buckets
+    # (critical >=80, high >=50, medium >=30, low >=10) and THREAT_THRESHOLD
+    # (30) exactly. Previously "low" mapped to 30, which sits ON the threat
+    # side of THREAT_THRESHOLD (>=30 => threat) instead of below it — so a
+    # judge that correctly said "severity: low" still got scored as a
+    # threat once converted. Midpoints of each bucket keep every value
+    # safely on the correct side of every boundary.
     s = (severity or "").strip().lower()
     if s in {"critical", "crit", "critical risk"}:
-        return 95
+        return 90
     if s in {"high", "severe"}:
-        return 80
+        return 65
     if s in {"medium", "moderate"}:
-        return 60
+        return 40
     if s in {"low", "minor"}:
-        return 30
+        return 20
     return 50
+
 
 
 def _extract_snippet(source_code: str, max_chars: int = 3000) -> str:
