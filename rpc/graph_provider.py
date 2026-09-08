@@ -17,7 +17,7 @@ query TokenLiquidity($token: String!, $since7d: Int!) {
     totalValueLockedUSD
     poolCount
   }
-  token0Pools: pools(first: 1000, where: {token0: $token}) {
+  token0Pools: pools(first: 50, orderBy: totalValueLockedUSD, orderDirection: desc, where: {token0: $token}) {
     id
     swaps(first: 1, orderBy: timestamp, orderDirection: asc) {
       timestamp
@@ -27,7 +27,7 @@ query TokenLiquidity($token: String!, $since7d: Int!) {
       volumeUSD
     }
   }
-  token1Pools: pools(first: 1000, where: {token1: $token}) {
+  token1Pools: pools(first: 50, orderBy: totalValueLockedUSD, orderDirection: desc, where: {token1: $token}) {
     id
     swaps(first: 1, orderBy: timestamp, orderDirection: asc) {
       timestamp
@@ -86,7 +86,7 @@ def get_token_liquidity_data(token_address: str, chain: str) -> dict:
         response = requests.post(
             GATEWAY_URL.format(api_key=api_key, subgraph_id=UNISWAP_V3_MAINNET_SUBGRAPH_ID),
             json={"query": TOKEN_LIQUIDITY_QUERY, "variables": {"token": normalized_address, "since7d": now - 7 * 86400}},
-            timeout=15,
+            timeout=30,
         )
         response.raise_for_status()
         payload = response.json()
@@ -110,12 +110,30 @@ def get_token_liquidity_data(token_address: str, chain: str) -> dict:
         pools = list(pools_by_id.values())
         token_pool_count = int(token.get("poolCount") or 0)
 
-        # Diagnostic: the pools(where: {token0/token1: $token}) sub-queries and
-        # the token's own poolCount field are two independent reads. If they
-        # disagree (e.g. poolCount > 0 but pools returned nothing, or vice
-        # versa), that disagreement is itself the signal worth seeing on the
-        # next live run - print it explicitly rather than silently picking one.
-        if token_pool_count != len(pools):
+        # Diagnostic: the pools(where: {token0/token1: $token}) sub-queries are
+        # capped at 50-per-side (ordered by TVL desc) to keep the query fast
+        # for high-liquidity tokens with hundreds of real pools (a token with
+        # >100 pools legitimately returning fewer than token.poolCount here is
+        # expected sampling, not a bug). Only flag a genuine anomaly: the
+        # token claims fewer pools than we actually fetched, or it claims
+        # pools exist but the sub-queries found none, or it's under the cap
+        # yet still doesn't match what we fetched.
+        POOL_FETCH_CAP = 100  # 50 per side (token0 + token1)
+        if token_pool_count == 0 and len(pools) > 0:
+            print(
+                f"    [GRAPH][DIAGNOSTIC] Mismatch for {normalized_address}: "
+                f"token.poolCount=0 but {len(pools)} pool(s) were found. "
+                "This is not yet root-caused against the live Gateway - treat "
+                "pool_count/volume/age below as unverified if this line appears."
+            )
+        elif 0 < token_pool_count < len(pools):
+            print(
+                f"    [GRAPH][DIAGNOSTIC] Mismatch for {normalized_address}: "
+                f"token.poolCount={token_pool_count} but {len(pools)} pool(s) were found. "
+                "This is not yet root-caused against the live Gateway - treat "
+                "pool_count/volume/age below as unverified if this line appears."
+            )
+        elif 0 < token_pool_count <= POOL_FETCH_CAP and token_pool_count != len(pools):
             print(
                 f"    [GRAPH][DIAGNOSTIC] Mismatch for {normalized_address}: "
                 f"token.poolCount={token_pool_count}, token0Pools={len(token0_pools)}, "
@@ -125,6 +143,17 @@ def get_token_liquidity_data(token_address: str, chain: str) -> dict:
             )
 
         first_swaps = [int(swap["timestamp"]) for pool in pools for swap in (pool.get("swaps") or []) if swap.get("timestamp")]
+        # Note: for tokens with more than 100 real pools, `pools` only holds
+        # the top ~100 by TVL (see the query's per-side cap above), not every
+        # pool. That means first_swap_timestamp / volume figures below are an
+        # approximation over the highest-liquidity pools, not a full-population
+        # figure - they can slightly understate 24h/7d volume from long-tail
+        # low-liquidity pools, and could show a younger age than reality if the
+        # token's original/oldest pool has since gone quiet and dropped out of
+        # the top-100. This trade-off is intentional: fetching every pool for
+        # a token like DAI (500+ pools, each with nested swap+day data) was
+        # timing out the Gateway request outright, so an approximation over
+        # the pools that actually carry most of the volume beats no data at all.
         volume_24h = 0.0
         volume_7d = 0.0
         for pool in pools:
