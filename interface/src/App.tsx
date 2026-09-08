@@ -68,17 +68,16 @@ export default function App() {
       executionSteps: [
         { title: 'Step 1: Contract source fetched.', duration: 'Live', completed: true }, { title: 'Step 2: Rule-based analysis completed.', duration: 'Live', completed: true }, { title: 'Step 3: Specialist analysis completed.', duration: 'Live', completed: true }, { title: 'Step 4: Judge pass completed.', duration: 'Live', completed: true }, { title: 'Step 5: Report generated.', duration: 'Live', completed: true },
       ], findings, judgeAssessment: finalReason, analysisParameters: result.parameters,
+      graphEvidence: result.graph_evidence ?? undefined,
     };
   };
 
   const triggerScanDirect = (address: string, network: EVMNetwork, handlers: AnalysisStreamHandlers) => {
-    const existing = investigations.find((t) => t.address.toLowerCase() === address.toLowerCase());
-    if (existing) {
-      setActiveToken(existing);
-      setCurrentView('scanner');
-      handlers.onResult({ verdict: existing.verdict, severity: '', score: existing.riskScore, rule_score: existing.ruleBasedScore, score_source: '', verdict_source: '', final_reason: existing.verdictExplanation, breakdown: [] });
-      return;
-    }
+    // A history entry is evidence from a prior run, not a cache hit. Always
+    // request a fresh backend analysis so a reviewer can detect changed risk.
+    const isReanalysis = investigations.some(
+      (item) => item.address.toLowerCase() === address.toLowerCase() && item.network === network,
+    );
     const chainByNetwork: Record<EVMNetwork, string> = { Ethereum: 'ethereum', Base: 'base', Arbitrum: 'arbitrum', Optimism: 'optimism', 'BNB Chain': 'bsc', Polygon: 'polygon', Avalanche: 'avalanche' };
     streamContractAnalysis(address.trim(), chainByNetwork[network], {
       onProgress: handlers.onProgress,
@@ -86,8 +85,12 @@ export default function App() {
         const investigation = createInvestigationFromApiResult(address.trim(), network, result);
         setInvestigations((previous) => [investigation, ...previous]);
         setActiveToken(investigation);
-        setUserAccount((previous) => ({ ...previous, freeScansRemaining: Math.max(0, previous.freeScansRemaining - 1), totalScansExecuted: previous.totalScansExecuted + 1 }));
-        setTransactions((previous) => [{ id: `tx-${Date.now()}`, timestamp: 'Just now', operation: 'Contract risk analysis', category: 'service', typeIcon: 'token', amount: '1 Scan', isCredit: false, isFree: true, txHash: 'Backend analysis', settlement: 'Success' }, ...previous]);
+        setUserAccount((previous) => ({
+          ...previous,
+          freeScansRemaining: isReanalysis ? previous.freeScansRemaining : Math.max(0, previous.freeScansRemaining - 1),
+          totalScansExecuted: previous.totalScansExecuted + 1,
+        }));
+        setTransactions((previous) => [{ id: `tx-${Date.now()}`, timestamp: 'Just now', operation: isReanalysis ? 'Contract risk reanalysis' : 'Contract risk analysis', category: 'service', typeIcon: 'token', amount: isReanalysis ? 'Reanalysis' : '1 Scan', isCredit: false, isFree: !isReanalysis, txHash: 'Backend analysis', settlement: 'Success' }, ...previous]);
         setCurrentView('scanner');
         handlers.onResult(result);
       },

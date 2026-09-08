@@ -12,10 +12,12 @@ Pipeline:
   8. Format human-readable risk summary
 """
 
+import json
 import os
 from dataclasses import dataclass, asdict
 from typing import Callable
 
+from rpc.graph_provider import get_token_liquidity_data
 from rpc.provider import get_contract_context, get_transfer_history, get_source_code
 from core.rules import scan_bytecode, scan_source
 from core.scoring import compute_score
@@ -56,6 +58,7 @@ class AnalysisResult:
     rule_score: int = 0
     score_source: str = "rule_based"
     verdict_source: str = "rule_based"
+    graph_evidence: dict = None
 
     def to_dict(self) -> dict:
         data = asdict(self)
@@ -81,6 +84,7 @@ class AnalysisResult:
             "comment": data.get("comment", ""),
             "judge_error": data.get("judge_error", ""),
             "final_reason": data.get("final_reason", ""),
+            "graph_evidence": data.get("graph_evidence") or {},
         }
 
     def format_comment(self, tool_name: str = TOOL_NAME) -> str:
@@ -175,6 +179,7 @@ def analyze(
 
     _emit("[2/5] Running rule-based analysis...")
     rpc_ctx = get_contract_context(address, chain=chain)
+    graph_evidence = get_token_liquidity_data(address, chain or "ethereum")
 
     transfers = get_transfer_history(address, limit=200, chain=chain)
     try:
@@ -234,6 +239,7 @@ def analyze(
             "source_files": source_files if source_verified else {},
             "behavioral": tx_analysis,
             "similar": similar,
+            "graph_evidence": graph_evidence,
         }
     else:
         specialist_context = {
@@ -242,6 +248,7 @@ def analyze(
             "bytecode_findings": bytecode_rules,
             "behavioral": tx_analysis,
             "similar": similar,
+            "graph_evidence": graph_evidence,
         }
 
     token_risk_prompt = (
@@ -250,6 +257,16 @@ def analyze(
         f"obvious hack.\n"
         f"Context mode: {specialist_context['mode']}\n"
         f"Contract: {contract_name}\n\n"
+        "LIQUIDITY EVIDENCE INSTRUCTIONS: The Graph evidence below is live Uniswap V3 "
+        "Ethereum-mainnet data. Treat clearly flagged no_data as unavailable evidence, not "
+        "as proof of safety or risk. If pools_data_reliable is false, total_liquidity_usd "
+        "may still be real but pool_count/first_swap_timestamp/recent_swap_volume_usd are "
+        "NOT confirmed - treat those specific fields as unavailable, not as confirmed zero, "
+        "and do not cite '0 pools' or '$0 volume' as a finding in that case. When data is "
+        "available and reliable, assess whether very thin or very new liquidity, or swap "
+        "volume disproportionate to liquidity, changes the legitimacy/rug-pull assessment. "
+        "State the observed figures and explain the signal; do not infer LP-lock status "
+        "from these figures alone.\n\n"
     )
     if specialist_context["mode"] == "source":
         token_risk_prompt += (
@@ -311,6 +328,8 @@ def analyze(
         token_risk_prompt += "BYTECODE_FINDINGS:\n"
         token_risk_prompt += str(specialist_context.get("bytecode_findings") or {})[:4000]
 
+    token_risk_prompt += "\nGRAPH_LIQUIDITY_EVIDENCE:\n"
+    token_risk_prompt += json.dumps(specialist_context["graph_evidence"], sort_keys=True)
     token_risk_prompt += "\nBEHAVIORAL_SUMMARY:\n"
     token_risk_prompt += tx_analysis.get("summary", "")[:2000]
 
@@ -436,6 +455,7 @@ def analyze(
         rule_score=rule_score,
         score_source=score_source,
         verdict_source=verdict_source,
+        graph_evidence=graph_evidence,
     )
     return result
 

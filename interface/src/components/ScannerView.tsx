@@ -70,12 +70,17 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
   );
 
   const startScan = (address: string, network: EVMNetwork, skipScannerGates = false) => {
-    if (!address.trim()) return;
-    if (!skipScannerGates && !userAccount.isWorldIdVerified) {
+    if (!address.trim() || isScanning) return;
+    const isCompletedHistoryTarget = investigations.some(
+      (item) => item.address.toLowerCase() === address.trim().toLowerCase() && item.network === network && !item.isAnalyzing,
+    );
+    // Previous results, including seeded/mock history, are never terminal:
+    // reanalysis always fetches current evidence once the previous run ended.
+    if (!skipScannerGates && !isCompletedHistoryTarget && !userAccount.isWorldIdVerified) {
       onOpenWorldIdModal();
       return;
     }
-    if (!skipScannerGates && userAccount.freeScansRemaining <= 0 && !userAccount.activeSubscription && userAccount.riskSearcherBalance <= 0) {
+    if (!skipScannerGates && !isCompletedHistoryTarget && userAccount.freeScansRemaining <= 0 && !userAccount.activeSubscription && userAccount.riskSearcherBalance <= 0) {
       onOpenSubscriptionModal();
       return;
     }
@@ -760,6 +765,83 @@ Generated via RiskSearcher Multi-Judge SEC-KERNEL`;
                   </div>
                 )}
 
+                {/* Section: Live Liquidity Evidence (The Graph / Uniswap V3) */}
+                {activeToken.graphEvidence && !activeToken.graphEvidence.no_data && (
+                  <div className="bg-[#060e20] p-4 rounded-xl border border-[#222a3d] space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="material-symbols-outlined text-[#4cd7f6] text-[18px]">water_drop</span>
+                        <h3 className="font-semibold text-sm text-[#dae2fd]">Live Liquidity — The Graph</h3>
+                      </div>
+                      <span className="font-mono text-[10px] text-[#4edea3] uppercase bg-[#00a572]/20 px-2 py-0.5 rounded">
+                        Uniswap V3 · On-Chain
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 font-mono text-xs">
+                      <div className="bg-[#131b2e] p-3 rounded-lg border border-[#222a3d]">
+                        <span className="text-[#8c909f] text-[10px] uppercase block">Total Liquidity (TVL)</span>
+                        <span className="text-base font-bold text-[#4cd7f6] block mt-0.5">
+                          {activeToken.graphEvidence.total_liquidity_usd != null
+                            ? `$${activeToken.graphEvidence.total_liquidity_usd.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+                            : '—'}
+                        </span>
+                        <span className="text-[10px] text-[#8c909f]">Across all pools</span>
+                      </div>
+
+                      <div className="bg-[#131b2e] p-3 rounded-lg border border-[#222a3d]">
+                        <span className="text-[#8c909f] text-[10px] uppercase block">Pool Count</span>
+                        <span className="text-base font-bold text-[#dae2fd] block mt-0.5">
+                          {activeToken.graphEvidence.pools_data_reliable === false
+                            ? '—'
+                            : activeToken.graphEvidence.pool_count.toLocaleString()}
+                        </span>
+                        <span className="text-[10px] text-[#8c909f]">Uniswap V3 pairs</span>
+                      </div>
+
+                      <div className="bg-[#131b2e] p-3 rounded-lg border border-[#222a3d]">
+                        <span className="text-[#8c909f] text-[10px] uppercase block">Pool Age</span>
+                        <span className="text-base font-bold text-[#dae2fd] block mt-0.5">
+                          {activeToken.graphEvidence.first_swap_timestamp
+                            ? `${Math.max(0, Math.floor((Date.now() / 1000 - activeToken.graphEvidence.first_swap_timestamp) / 86400)).toLocaleString()}d`
+                            : '—'}
+                        </span>
+                        <span className="text-[10px] text-[#8c909f]">Since first swap</span>
+                      </div>
+
+                      <div className="bg-[#131b2e] p-3 rounded-lg border border-[#222a3d]">
+                        <span className="text-[#8c909f] text-[10px] uppercase block">Swap Volume</span>
+                        <span className="text-base font-bold text-[#dae2fd] block mt-0.5">
+                          {activeToken.graphEvidence.recent_swap_volume_usd['24h'] != null
+                            ? `$${activeToken.graphEvidence.recent_swap_volume_usd['24h'].toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+                            : '—'}
+                        </span>
+                        <span className="text-[10px] text-[#8c909f]">Last 24h</span>
+                      </div>
+                    </div>
+
+                    {activeToken.graphEvidence.pools_data_reliable === false && (
+                      <div className="bg-[#131b2e] p-3 rounded-lg border border-[#222a3d] font-mono text-[11px] flex items-start gap-2">
+                        <span className="material-symbols-outlined text-[#adc6ff] text-[16px] shrink-0 mt-0.5">info</span>
+                        <p className="text-[#8c909f]">
+                          Total liquidity above is confirmed live. Pool count, age, and volume are
+                          unavailable this run — shown as unconfirmed rather than zero.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {activeToken.graphEvidence?.no_data && (
+                  <div className="bg-[#060e20] p-3 rounded-xl border border-[#222a3d] font-mono text-[11px] flex items-start gap-2">
+                    <span className="material-symbols-outlined text-[#8c909f] text-[16px] shrink-0 mt-0.5">water_drop</span>
+                    <p className="text-[#8c909f]">
+                      Live liquidity data (The Graph) unavailable this run: {activeToken.graphEvidence.reason || 'no data returned'}.
+                      Not treated as a safety signal.
+                    </p>
+                  </div>
+                )}
+
                 {/* Plain Language Technical Findings */}
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
@@ -989,7 +1071,8 @@ Generated via RiskSearcher Multi-Judge SEC-KERNEL`;
                   <button
                     type="submit"
                     disabled={isScanning}
-                    className="bg-[#4d8eff] hover:bg-[#adc6ff] text-[#00285d] hover:text-[#002e6a] px-4 py-2 rounded-lg font-semibold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-all active:scale-[0.99] shadow-sm shrink-0 w-full sm:w-auto"
+                    title={isScanning ? 'Analysis in progress' : 'Run a fresh analysis, even for a completed history entry'}
+                    className="bg-[#4d8eff] hover:bg-[#adc6ff] disabled:cursor-not-allowed disabled:opacity-70 text-[#00285d] hover:text-[#002e6a] px-4 py-2 rounded-lg font-semibold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-all active:scale-[0.99] shadow-sm shrink-0 w-full sm:w-auto"
                   >
                     {isScanning ? (
                       <>

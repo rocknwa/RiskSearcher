@@ -13,6 +13,19 @@ export interface AnalysisProgressEvent {
   message: string;
 }
 
+export interface GraphEvidence {
+  source: string;
+  token_address: string;
+  chain: string;
+  no_data: boolean;
+  reason: string;
+  total_liquidity_usd: number | null;
+  first_swap_timestamp: number | null;
+  recent_swap_volume_usd: { '24h': number | null; '7d': number | null };
+  pool_count: number;
+  pools_data_reliable?: boolean;
+}
+
 /** The final `result` event emitted by the FastAPI `/analyze` SSE endpoint. */
 export interface AnalysisApiResult {
   verdict: string;
@@ -24,6 +37,7 @@ export interface AnalysisApiResult {
   final_reason: string;
   parameters?: Record<string, unknown>;
   breakdown: string[];
+  graph_evidence?: GraphEvidence | null;
 }
 
 export interface AnalysisStreamHandlers {
@@ -95,6 +109,7 @@ export interface TokenInvestigation {
   transactionBehavior?: TransactionBehaviorData;
   specialistFindings?: SpecialistFinding[];
   judgeAssessment?: string;
+  graphEvidence?: GraphEvidence;
   similarScams?: {
     name: string;
     similarity: string;

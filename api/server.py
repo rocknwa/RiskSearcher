@@ -77,6 +77,7 @@ def _run_analysis_stream(address: str, chain: str) -> Generator[str, None, None]
                 "verdict_source": getattr(result, "verdict_source", None),
                 "final_reason": getattr(result, "final_reason", ""),
                 "breakdown": result.breakdown,
+                "graph_evidence": getattr(result, "graph_evidence", None),
             }))
         except Exception as exc:
             q.put(("error", {"message": str(exc)}))
