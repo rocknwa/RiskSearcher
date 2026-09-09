@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { EVMNetwork } from '../types';
+import { withdrawUsdc } from '../services/arcApi';
 
 interface WithdrawUsdcModalProps {
   isOpen: boolean;
   onClose: () => void;
   walletBalance: number;
+  userAddress: string;
   onWithdrawSuccess: (amount: number, destination: string, network: EVMNetwork) => void;
 }
 
@@ -12,6 +14,7 @@ export const WithdrawUsdcModal: React.FC<WithdrawUsdcModalProps> = ({
   isOpen,
   onClose,
   walletBalance,
+  userAddress,
   onWithdrawSuccess,
 }) => {
   const [destination, setDestination] = useState('');
@@ -20,6 +23,7 @@ export const WithdrawUsdcModal: React.FC<WithdrawUsdcModalProps> = ({
   const [step, setStep] = useState<'input' | 'review' | 'success'>('input');
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState('');
+  const [txId, setTxId] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -51,17 +55,31 @@ export const WithdrawUsdcModal: React.FC<WithdrawUsdcModalProps> = ({
 
   const handleConfirmWithdraw = () => {
     setIsProcessing(true);
-    setTimeout(() => {
-      setIsProcessing(false);
-      onWithdrawSuccess(numAmount, destination, network);
-      setStep('success');
-      setTimeout(() => {
+    setError('');
+    withdrawUsdc(userAddress, destination, numAmount)
+      .then((result) => {
+        setIsProcessing(false);
+        if (result.no_data) {
+          setError(`Withdrawal failed: ${result.reason || 'the Arc treasury service is unavailable.'}`);
+          setStep('input');
+          return;
+        }
+        setTxId(result.transaction_id ?? null);
+        onWithdrawSuccess(numAmount, destination, network);
+        setStep('success');
+        setTimeout(() => {
+          setStep('input');
+          setAmount('');
+          setDestination('');
+          setTxId(null);
+          onClose();
+        }, 2200);
+      })
+      .catch((err: Error) => {
+        setIsProcessing(false);
+        setError(err.message);
         setStep('input');
-        setAmount('');
-        setDestination('');
-        onClose();
-      }, 1800);
-    }, 1200);
+      });
   };
 
   return (
@@ -252,10 +270,13 @@ export const WithdrawUsdcModal: React.FC<WithdrawUsdcModalProps> = ({
             <div className="w-12 h-12 rounded-full bg-[#00a572]/20 border border-[#00a572] flex items-center justify-center text-[#4edea3] mx-auto">
               <span className="material-symbols-outlined text-[28px]">check_circle</span>
             </div>
-            <h4 className="font-bold text-base text-[#dae2fd]">Demo withdrawal submitted</h4>
+            <h4 className="font-bold text-base text-[#dae2fd]">Withdrawal submitted on Arc</h4>
             <p className="font-mono text-xs text-[#4edea3]">
               ${numAmount.toFixed(2)} USDC withdrawn to {destination.slice(0, 6)}...{destination.slice(-4)}
             </p>
+            {txId && (
+              <p className="font-mono text-[10px] text-[#8c909f] break-all">Arc tx: {txId}</p>
+            )}
           </div>
         )}
 

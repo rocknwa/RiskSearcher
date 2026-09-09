@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
+import { paySubscription } from '../services/arcApi';
 
 interface SubscriptionModalProps {
   isOpen: boolean;
   onClose: () => void;
   walletBalance: number;
-  onOpenAddFunds: () => void;
+  userAddress: string;
+  onOpenAddFundsModal: () => void;
   onSubscribeSuccess: (planName: string, amount: number) => void;
 }
 
@@ -12,11 +14,14 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
   isOpen,
   onClose,
   walletBalance,
-  onOpenAddFunds,
+  userAddress,
+  onOpenAddFundsModal,
   onSubscribeSuccess,
 }) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [step, setStep] = useState<'checkout' | 'success'>('checkout');
+  const [error, setError] = useState('');
+  const [txId, setTxId] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -28,15 +33,27 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
     if (!hasSufficientBalance) return;
 
     setIsProcessing(true);
-    setTimeout(() => {
-      setIsProcessing(false);
-      onSubscribeSuccess('RiskSearcher Pro', planPrice);
-      setStep('success');
-      setTimeout(() => {
-        setStep('checkout');
-        onClose();
-      }, 2000);
-    }, 1400);
+    setError('');
+    paySubscription(userAddress, planPrice)
+      .then((result) => {
+        setIsProcessing(false);
+        if (result.no_data) {
+          setError(`Payment failed: ${result.reason || 'the Arc treasury service is unavailable.'}`);
+          return;
+        }
+        setTxId(result.transaction_id ?? null);
+        onSubscribeSuccess('RiskSearcher Pro', planPrice);
+        setStep('success');
+        setTimeout(() => {
+          setStep('checkout');
+          setTxId(null);
+          onClose();
+        }, 2200);
+      })
+      .catch((err: Error) => {
+        setIsProcessing(false);
+        setError(err.message);
+      });
   };
 
   return (
@@ -135,7 +152,7 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
                     type="button"
                     onClick={() => {
                       onClose();
-                      onOpenAddFunds();
+                      onOpenAddFundsModal();
                     }}
                     className="w-full py-2 bg-[#4edea3] hover:bg-[#6ffbbe] text-[#003824] font-bold font-mono text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5"
                   >
@@ -154,7 +171,7 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
                 {isProcessing ? (
                   <>
                     <span className="material-symbols-outlined animate-spin text-[18px]">sync</span>
-                    <span>Broadcasting ERC-4337 UserOp...</span>
+                    <span>Submitting Arc payment...</span>
                   </>
                 ) : (
                   <>
@@ -163,6 +180,10 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
                   </>
                 )}
               </button>
+            )}
+
+            {error && (
+              <p className="text-xs text-[#ffb4ab] font-mono leading-relaxed">{error}</p>
             )}
 
             {/* Explicit Non-Withdrawable Rule */}
@@ -182,10 +203,13 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
             <div className="w-12 h-12 rounded-full bg-[#00a572]/20 border border-[#00a572] flex items-center justify-center text-[#4edea3] mx-auto">
               <span className="material-symbols-outlined text-[28px]">verified</span>
             </div>
-            <h4 className="font-bold text-base text-[#dae2fd]">Demo payment confirmed ✓</h4>
+            <h4 className="font-bold text-base text-[#dae2fd]">Payment confirmed on Arc ✓</h4>
             <p className="font-mono text-xs text-[#4edea3]">
               +$20.00 RiskSearcher service credit added (200 scans unlocked)
             </p>
+            {txId && (
+              <p className="font-mono text-[10px] text-[#8c909f] break-all">Arc tx: {txId}</p>
+            )}
             <p className="font-mono text-[11px] text-[#8c909f]">
               Your subscription balance is service credit and cannot be withdrawn or transferred.
             </p>
