@@ -17,15 +17,18 @@ host once deployed. This is a separate deployment from the Vercel frontend.
 """
 
 import json
+import os
 import queue
 import threading
 from typing import Generator
 
-from fastapi import FastAPI, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from core.analyzer import analyze
+from rpc import arc_provider
 
 app = FastAPI(title="RiskSearcher API")
 
@@ -113,6 +116,108 @@ def analyze_endpoint(
             "X-Accel-Buffering": "no",  # disable proxy buffering (nginx etc.) so SSE streams live
         },
     )
+
+
+class WithdrawRequest(BaseModel):
+    address: str  # the user's identity key (their connected EOA)
+    destination: str  # where to send USDC on Arc Testnet
+    amount: float
+
+
+class SubscribeRequest(BaseModel):
+    address: str
+    plan_price: float
+
+
+def _wallet_and_balance(user_address: str) -> dict:
+    """Real Arc Testnet deposit address + live USDC balance for a user.
+    Returns a no_data-shaped dict (never raises) if Arc isn't configured
+    or the account can't be reached — same discipline as Graph evidence."""
+    wallet = arc_provider.get_or_create_wallet(user_address)
+    if wallet.get("no_data"):
+        return wallet
+    balance = arc_provider.get_wallet_balance(wallet["wallet_id"])
+    return {
+        "no_data": balance.get("no_data", False),
+        "reason": balance.get("reason", ""),
+        "deposit_address": wallet["deposit_address"],
+        "usdc_balance": balance.get("usdc_balance"),
+    }
+
+
+@app.get("/arc/wallet")
+def arc_wallet_endpoint(address: str = Query(..., description="Connected wallet address (user identity key)")):
+    """Real Arc Testnet deposit address + live USDC balance for this user.
+    Creates the wallet on first call; same address is returned on every
+    subsequent call. Never raises — a Circle-side or config problem comes
+    back as {"no_data": true, "reason": "..."} for the frontend to handle."""
+    return _wallet_and_balance(address)
+
+
+@app.post("/arc/withdraw")
+def arc_withdraw_endpoint(payload: WithdrawRequest = Body(...)):
+    """Real, on-chain USDC transfer from the user's Arc Testnet wallet to
+    an address they specify. 400s only on missing/invalid input; a Circle-
+    side failure still returns 200 with {"no_data": true, "reason": "..."}
+    so the frontend shows a clean error instead of a stack trace."""
+    wallet = arc_provider.get_or_create_wallet(payload.address)
+    if wallet.get("no_data"):
+        raise HTTPException(status_code=400, detail=f"Arc wallet unavailable: {wallet.get('reason')}")
+    return arc_provider.send_usdc(wallet["wallet_id"], payload.destination, payload.amount)
+
+
+@app.post("/arc/subscribe")
+def arc_subscribe_endpoint(payload: SubscribeRequest = Body(...)):
+    """Real, on-chain USDC payment from the user's Arc Testnet wallet to
+    the platform treasury address (ARC_TREASURY_ADDRESS), for the given
+    plan price. Same underlying transfer as /arc/withdraw, different
+    destination. Does not itself grant subscription access server-side —
+    the frontend marks the plan active once the transfer is confirmed
+    submitted; this endpoint's job is only to move the real funds."""
+    treasury_address = os.environ.get("ARC_TREASURY_ADDRESS", "").strip()
+    if not treasury_address:
+        raise HTTPException(status_code=400, detail="ARC_TREASURY_ADDRESS is not configured on the server")
+    wallet = arc_provider.get_or_create_wallet(payload.address)
+    if wallet.get("no_data"):
+        raise HTTPException(status_code=400, detail=f"Arc wallet unavailable: {wallet.get('reason')}")
+    return arc_provider.send_usdc(wallet["wallet_id"], treasury_address, payload.plan_price)
+
+
+@app.get("/debug/setup-entity-secret")
+def debug_setup_entity_secret(token: str = Query(...)):
+    """TEMPORARY, ONE-TIME-USE. Generates a Circle entity secret and
+    registers it with Circle in a single call, so this can be done from a
+    phone browser with no local machine. Gated by SETUP_TOKEN (a throwaway
+    value you set yourself in Render env vars) so a random visitor can't
+    trigger it.
+
+    DELETE THIS ENDPOINT (and remove SETUP_TOKEN) immediately after you've
+    copied the entity_secret and recovery_file_base64 out of the response —
+    it generates a real secret that controls real wallets, and has no
+    business staying live in production.
+    """
+    setup_token = os.environ.get("SETUP_TOKEN", "")
+    if not setup_token or token != setup_token:
+        raise HTTPException(status_code=403, detail="Invalid or missing setup token")
+
+    api_key = os.environ.get("CIRCLE_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(status_code=400, detail="CIRCLE_API_KEY is not set")
+
+    from circle.web3 import utils
+
+    entity_secret = os.urandom(32).hex()
+    try:
+        result = utils.register_entity_secret_ciphertext(api_key=api_key, entity_secret=entity_secret)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Registration with Circle failed: {exc}")
+
+    return {
+        "entity_secret": entity_secret,
+        "note": "Set this exact value as CIRCLE_ENTITY_SECRET in Render env vars, then delete this endpoint.",
+        "recovery_file_base64": (result or {}).get("data", {}).get("recoveryFile"),
+        "recovery_note": "Save this string somewhere safe (e.g. a private notes app) — Circle needs it if you ever lose entity secret access. It's shown once.",
+    }
 
 
 @app.get("/health")
