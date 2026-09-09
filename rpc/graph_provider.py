@@ -37,6 +37,12 @@ query TokenLiquidity($token: String!, $since7d: Int!) {
       volumeUSD
     }
   }
+  token0PoolIds: pools(first: 1000, where: {token0: $token}) {
+    id
+  }
+  token1PoolIds: pools(first: 1000, where: {token1: $token}) {
+    id
+  }
 }
 """
 
