@@ -46,6 +46,23 @@ query TokenLiquidity($token: String!, $since7d: Int!) {
 }
 """
 
+# Cursor-paginated, ID-only (no nested data, cheap) — used to count pools
+# past GraphQL's 1000-per-request `first` ceiling for hub tokens (WETH,
+# USDC, USDT, WBTC) that can have several thousand real Uniswap V3 pools.
+POOL_ID_PAGE_QUERY = """
+query PoolIdsBySide($token: String!, $cursor: String!) {
+  pools(first: 1000, orderBy: id, orderDirection: asc, where: {%s: $token, id_gt: $cursor}) {
+    id
+  }
+}
+"""
+
+# Hard ceiling on pagination rounds per side. 5 pages x 1000 = 5000 pools
+# per side (10,000 total across both sides) comfortably covers even WETH's
+# researched ~3,500 active V3 pools with headroom, while still bounding
+# worst-case request count/latency for a single scan.
+MAX_POOL_ID_PAGES = 5
+
 
 def _no_data(token_address: str, chain: str, reason: str) -> dict:
     """Return the stable, explicitly degraded Graph-evidence shape."""
@@ -59,6 +76,7 @@ def _no_data(token_address: str, chain: str, reason: str) -> dict:
         "first_swap_timestamp": None,
         "recent_swap_volume_usd": {"24h": None, "7d": None},
         "pool_count": 0,
+        "pool_count_exact": True,
     }
 
 
@@ -67,6 +85,57 @@ def _as_float(value: object) -> float:
         return float(value or 0)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _paginate_pool_ids(api_key: str, token: str, side_field: str, timeout: int) -> tuple[set, bool]:
+    """Cursor-paginate pool IDs for one side (token0 or token1) past
+    GraphQL's 1000-per-request `first` ceiling.
+
+    Only fires extra requests when a page actually comes back full (1000
+    IDs) - for the overwhelming majority of tokens (under 1000 pools per
+    side) this is a single cheap ID-only request, same cost as before.
+    Only true hub tokens (WETH, USDC, USDT, WBTC) pay for pagination.
+
+    Returns (ids, is_exact). is_exact is False if MAX_POOL_ID_PAGES was
+    exhausted without a short final page (there are likely more pools
+    beyond what was fetched) or a page request failed outright - callers
+    should treat the count as a lower bound, not a final number, in
+    either case.
+    """
+    query = POOL_ID_PAGE_QUERY % side_field
+    ids: set = set()
+    cursor = ""
+    for page_num in range(MAX_POOL_ID_PAGES):
+        try:
+            response = requests.post(
+                GATEWAY_URL.format(api_key=api_key, subgraph_id=UNISWAP_V3_MAINNET_SUBGRAPH_ID),
+                json={"query": query, "variables": {"token": token, "cursor": cursor}},
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except Exception as exc:
+            print(f"    [GRAPH] Pool-ID pagination request failed ({side_field}, page {page_num + 1}) after {len(ids)} id(s) so far: {exc}")
+            return ids, False
+        if payload.get("errors"):
+            print(f"    [GRAPH] Pool-ID pagination query error ({side_field}, page {page_num + 1}): {payload['errors']}")
+            return ids, False
+
+        page = (payload.get("data") or {}).get("pools") or []
+        if not page:
+            return ids, True
+        for pool in page:
+            pid = pool.get("id")
+            if pid:
+                ids.add(pid)
+        if len(page) < 1000:
+            return ids, True
+        cursor = page[-1]["id"]
+
+    # Exhausted MAX_POOL_ID_PAGES pages and the last one was still full -
+    # there are almost certainly more pools than MAX_POOL_ID_PAGES*1000.
+    print(f"    [GRAPH] Pool-ID pagination hit the {MAX_POOL_ID_PAGES}-page cap for {side_field} ({len(ids)} id(s) so far); treating count as a lower bound")
+    return ids, False
 
 
 def get_token_liquidity_data(token_address: str, chain: str) -> dict:
@@ -116,26 +185,27 @@ def get_token_liquidity_data(token_address: str, chain: str) -> dict:
         # `pools` (above) is the capped, TVL-ordered, nested-data set used
         # only for the volume/age approximation below - it maxes out at 100
         # regardless of how many pools actually exist (see the query's cap).
-        # For the *count* itself, use the separate ID-only sub-queries instead,
-        # which aren't capped in any way that matters (up to 1000, cheap
-        # because they carry no nested swap/day data) - using the capped list
-        # here would silently report 100 as the pool count for any token that
-        # actually has more than that, which is exactly the bug this fixes.
+        # For the *count* itself, paginate the ID-only side separately -
+        # cursor-paginated past GraphQL's 1000-per-request ceiling, since
+        # hub tokens (WETH, USDC, USDT, WBTC) can have several thousand
+        # real pools. Using the capped nested-data list here would silently
+        # report a number far below reality, which is exactly the bug this
+        # fixes (first as a flat 100-pool cap, then again at a flat 1000
+        # when a single-page ID query was tried instead).
         pools = list(pools_by_id.values())
-        all_pool_ids = {
-            pool.get("id")
-            for pool in (data.get("token0PoolIds") or []) + (data.get("token1PoolIds") or [])
-            if pool.get("id")
-        }
+        token0_ids, token0_exact = _paginate_pool_ids(api_key, normalized_address, "token0", timeout=15)
+        token1_ids, token1_exact = _paginate_pool_ids(api_key, normalized_address, "token1", timeout=15)
+        all_pool_ids = token0_ids | token1_ids
         real_pool_count = len(all_pool_ids)
+        pool_count_exact = token0_exact and token1_exact
         token_pool_count = int(token.get("poolCount") or 0)
 
         # Diagnostic: token.poolCount and the ID-only enumeration are two
-        # independent reads of the same thing and should agree exactly (the
-        # ID-only queries aren't capped in any way that would explain a
-        # legitimate difference, unlike the nested-data `pools` list above).
-        # If they disagree, that's a genuine data-quality signal worth seeing.
-        if token_pool_count != real_pool_count:
+        # independent reads of the same thing and should agree exactly when
+        # pool_count_exact is True (pagination wasn't cut short). When
+        # pagination WAS cut short, a mismatch is expected (real_pool_count
+        # is a floor, not the true value) and not worth flagging.
+        if pool_count_exact and token_pool_count != real_pool_count:
             print(
                 f"    [GRAPH][DIAGNOSTIC] Mismatch for {normalized_address}: "
                 f"token.poolCount={token_pool_count} but ID-only enumeration found "
@@ -189,10 +259,16 @@ def get_token_liquidity_data(token_address: str, chain: str) -> dict:
                 else {"24h": None, "7d": None}
             ),
             "pool_count": max(token_pool_count, real_pool_count),
+            # False for hub tokens (WETH, USDC, USDT, WBTC, ...) whose true
+            # pool count exceeds MAX_POOL_ID_PAGES*1000 per side - pool_count
+            # above is then a floor, not the true value, and should be
+            # rendered as e.g. "5,000+" rather than an exact-looking number.
+            "pool_count_exact": pool_count_exact,
             "pools_data_reliable": pools_data_reliable,
         }
         print(
-            f"    [GRAPH] Fetched Uniswap V3 liquidity evidence: {result['pool_count']} pool(s), "
+            f"    [GRAPH] Fetched Uniswap V3 liquidity evidence: {result['pool_count']}"
+            f"{'' if pool_count_exact else '+'} pool(s), "
             f"${result['total_liquidity_usd']:,.2f} TVL"
             + ("" if pools_data_reliable else " (pool-level detail unavailable this run - see diagnostic above)")
         )

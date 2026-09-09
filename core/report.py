@@ -100,7 +100,7 @@ def render_markdown_report(result) -> str:
         volume_7d = volumes.get("7d")
         lines.extend([
             "- **Source:** The Graph — Uniswap V3 Ethereum mainnet subgraph",
-            f"- **Pool count:** {graph.get('pool_count', 0)}",
+            f"- **Pool count:** {graph.get('pool_count', 0)}{'' if graph.get('pool_count_exact', True) else '+'}",
             f"- **Total liquidity (USD):** ${float(graph.get('total_liquidity_usd') or 0):,.2f}",
             f"- **First observed swap timestamp:** {graph.get('first_swap_timestamp') or 'not available'}",
             (
