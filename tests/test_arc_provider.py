@@ -108,6 +108,12 @@ class ArcProviderTests(unittest.TestCase):
         self.assertEqual(result["transaction_id"], "tx-1")
         self.assertEqual(result["status"], "INITIATED")
         transfer.assert_called_once()
+        # Regression guard: Circle's live API rejects a transfer request
+        # with neither token_id/token_address nor blockchain set (confirmed
+        # live: "'tokenId' field may not be empty when 'Blockchain' field is
+        # not set"). USDC is Arc's native asset, so blockchain must be set.
+        sent_request = transfer.call_args.args[0]
+        self.assertEqual(sent_request.blockchain.actual_instance, "ARC-TESTNET")
 
     @patch.dict(os.environ, {"CIRCLE_API_KEY": "key", "CIRCLE_ENTITY_SECRET": "a" * 64}, clear=False)
     @patch("rpc.arc_provider._get_client")
