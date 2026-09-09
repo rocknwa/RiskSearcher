@@ -195,6 +195,13 @@ def send_usdc(wallet_id: str, destination_address: str, amount: float) -> dict:
             "destinationAddress": destination_address,
             "amounts": [str(amount)],
             "feeLevel": "MEDIUM",
+            # Circle's transfer API requires either tokenId/tokenAddress (an
+            # ERC-20 transfer) or blockchain (a native-asset transfer) to be
+            # set - USDC is Arc's native asset, so this is a native transfer
+            # and blockchain is the one that applies. Confirmed live: a run
+            # without this field failed with "'tokenId' field may not be
+            # empty when 'Blockchain' field is not set".
+            "blockchain": "ARC-TESTNET",
         })
         response = api.create_developer_transaction_transfer(request)
         return {"no_data": False, "transaction_id": response.data.id, "status": response.data.state}
