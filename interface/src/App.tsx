@@ -529,6 +529,7 @@ export default function App() {
       <SendUsdcModal
         isOpen={isWalletConnected && isSendModalOpen}
         walletBalance={userAccount.walletUsdcBalance}
+        userAddress={userAccount.address}
         onClose={() => setIsSendModalOpen(false)}
         onSendSuccess={handleSendSuccess}
       />
@@ -537,6 +538,7 @@ export default function App() {
       <WithdrawUsdcModal
         isOpen={isWalletConnected && isWithdrawModalOpen}
         walletBalance={userAccount.walletUsdcBalance}
+        userAddress={userAccount.address}
         onClose={() => setIsWithdrawModalOpen(false)}
         onWithdrawSuccess={handleWithdrawSuccess}
       />
@@ -545,6 +547,7 @@ export default function App() {
       <SubscriptionModal
         isOpen={isWalletConnected && isSubscriptionModalOpen}
         walletBalance={userAccount.walletUsdcBalance}
+        userAddress={userAccount.address}
         onClose={() => setIsSubscriptionModalOpen(false)}
         onSubscribeSuccess={handleSubscribeSuccess}
         onOpenAddFundsModal={() => {
