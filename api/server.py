@@ -220,6 +220,45 @@ def debug_setup_entity_secret(token: str = Query(...)):
     }
 
 
+@app.get("/debug/create-wallet-set")
+def debug_create_wallet_set(token: str = Query(...)):
+    """TEMPORARY, ONE-TIME-USE. Creates a real Circle wallet set on Arc and
+    returns its ID, so you can pin it as CIRCLE_WALLET_SET_ID instead of
+    relying on arc_provider's auto-create-and-cache-in-a-json-file fallback
+    (which is lost on every Render restart, since Render's disk is
+    ephemeral). Gated by the same SETUP_TOKEN as /debug/setup-entity-secret.
+
+    DELETE THIS ENDPOINT immediately after copying wallet_set_id out of the
+    response — same reasoning as the entity-secret endpoint: no reason for
+    credential/resource-creation machinery to stay live in production.
+    """
+    setup_token = os.environ.get("SETUP_TOKEN", "")
+    if not setup_token or token != setup_token:
+        raise HTTPException(status_code=403, detail="Invalid or missing setup token")
+
+    if not os.environ.get("CIRCLE_API_KEY", "").strip() or not os.environ.get("CIRCLE_ENTITY_SECRET", "").strip():
+        raise HTTPException(status_code=400, detail="CIRCLE_API_KEY / CIRCLE_ENTITY_SECRET must be set first")
+
+    client = arc_provider._get_client()
+    if client is None:
+        raise HTTPException(status_code=502, detail="Could not initialize the Circle client — check CIRCLE_API_KEY / CIRCLE_ENTITY_SECRET")
+
+    from circle.web3 import developer_controlled_wallets as dcw
+
+    try:
+        api = dcw.WalletSetsApi(client)
+        request = dcw.CreateWalletSetRequest.from_dict({"name": "risksearcher-treasury"})
+        response = api.create_wallet_set(request)
+        wallet_set_id = response.data.wallet_set.id
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Wallet set creation failed: {exc}")
+
+    return {
+        "wallet_set_id": wallet_set_id,
+        "note": "Set this exact value as CIRCLE_WALLET_SET_ID in Render env vars, then delete this endpoint. Do not call this again — it creates a NEW wallet set each time, it doesn't return an existing one.",
+    }
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
