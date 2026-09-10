@@ -213,6 +213,24 @@ export const AddFundsModal: React.FC<AddFundsModalProps> = ({
               </span>
               <span>{isLoadingWallet ? 'Checking Arc chain...' : 'Refresh Balance'}</span>
             </button>
+
+            <button
+              type="button"
+              disabled={!depositAddress}
+              onClick={() => {
+                if (depositAddress) {
+                  navigator.clipboard.writeText(depositAddress);
+                }
+                window.open('https://faucet.circle.com', '_blank', 'noopener,noreferrer');
+              }}
+              className="w-full py-2.5 bg-[#4edea3]/10 hover:bg-[#4edea3]/20 border border-[#4edea3]/40 text-[#4edea3] rounded-xl font-mono text-xs font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+            >
+              <span className="material-symbols-outlined text-[16px]">water_drop</span>
+              <span>Get Free Testnet USDC</span>
+            </button>
+            <p className="font-mono text-[10px] text-[#8c909f] text-center -mt-2">
+              Opens Circle's official faucet in a new tab and copies your address above — just paste, pick Arc Testnet, and submit. Free, no account needed, up to 10 USDC every 24h.
+            </p>
           </div>
         )}
 

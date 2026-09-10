@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { UserAccountState, LedgerTransaction } from '../types';
+import { SUBSCRIPTION_PRICE_USDC } from '../config';
 
 interface AccountsViewProps {
   userAccount: UserAccountState;
@@ -363,7 +364,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
               className="bg-[#4d8eff] hover:bg-[#adc6ff] text-[#00285d] hover:text-[#002e6a] font-bold font-mono text-xs px-3.5 py-2 rounded-xl transition-all shadow-md flex items-center gap-1.5"
             >
               <span className="material-symbols-outlined text-[16px]">stars</span>
-              <span>{userAccount.activeSubscription ? 'Plan Active' : 'Subscribe ($20/mo)'}</span>
+              <span>{userAccount.activeSubscription ? 'Plan Active' : `Subscribe ($${SUBSCRIPTION_PRICE_USDC}/mo)`}</span>
             </button>
           </div>
 

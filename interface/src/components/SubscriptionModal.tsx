@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { getArcWallet, paySubscription } from '../services/arcApi';
+import { SUBSCRIPTION_PRICE_USDC } from '../config';
 
 interface SubscriptionModalProps {
   isOpen: boolean;
@@ -48,7 +49,7 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
 
   if (!isOpen) return null;
 
-  const planPrice = 20.00;
+  const planPrice = SUBSCRIPTION_PRICE_USDC;
   // Use the real, freshly-fetched balance once we have it. Fall back to the
   // stale local prop only while the real fetch is still in flight, so the
   // UI never lets a stale mock number drive a real payment decision.
@@ -117,7 +118,7 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
                   <span className="font-mono text-xs text-[#8c909f]">Forensic Specialist Node</span>
                 </div>
                 <div className="text-right">
-                  <span className="font-mono text-xl font-bold text-[#4edea3]">$20</span>
+                  <span className="font-mono text-xl font-bold text-[#4edea3]">${planPrice}</span>
                   <span className="font-mono text-xs text-[#8c909f]"> USDC / mo</span>
                 </div>
               </div>
@@ -162,7 +163,7 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
               )}
               <div className="flex items-center justify-between font-mono text-xs border-t border-[#222a3d]/70 pt-2">
                 <span className="text-[#8c909f]">Subscription Price:</span>
-                <span className="text-[#dae2fd] font-bold">$20.00 USDC</span>
+                <span className="text-[#dae2fd] font-bold">${planPrice.toFixed(2)} USDC</span>
               </div>
             </div>
 
@@ -213,7 +214,7 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
                 ) : (
                   <>
                     <span className="material-symbols-outlined text-[18px]">credit_score</span>
-                    <span>Pay $20 USDC</span>
+                    <span>Pay ${planPrice} USDC</span>
                   </>
                 )}
               </button>
@@ -242,7 +243,7 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
             </div>
             <h4 className="font-bold text-base text-[#dae2fd]">Payment confirmed on Arc ✓</h4>
             <p className="font-mono text-xs text-[#4edea3]">
-              +$20.00 RiskSearcher service credit added (200 scans unlocked)
+              +${planPrice.toFixed(2)} RiskSearcher service credit added (200 scans unlocked)
             </p>
             {txId && (
               <p className="font-mono text-[10px] text-[#8c909f] break-all">Arc tx: {txId}</p>
