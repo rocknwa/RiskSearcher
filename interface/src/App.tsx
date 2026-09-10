@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Header } from './components/Header';
 import { Footer } from './components/Footer';
 import { LandingPage } from './components/LandingPage';
@@ -21,6 +21,7 @@ import {
 } from './data/mockData';
 import { AnalysisApiResult, AnalysisStreamHandlers, TokenInvestigation, EVMNetwork, UserAccountState, LedgerTransaction, RiskVerdict, VulnerabilityFlag } from './types';
 import { streamContractAnalysis } from './services/riskSearcherApi';
+import { getArcWallet } from './services/arcApi';
 
 export default function App() {
   const [currentView, setCurrentView] = useState<'landing' | 'scanner' | 'accounts' | 'supported-chains' | 'pricing' | 'documentation' | 'how-it-works'>('landing');
@@ -48,6 +49,23 @@ export default function App() {
   const [isSendModalOpen, setIsSendModalOpen] = useState(false);
   const [isWithdrawModalOpen, setIsWithdrawModalOpen] = useState(false);
   const [isSubscriptionModalOpen, setIsSubscriptionModalOpen] = useState(false);
+
+  // AccountsView (and anywhere else reading userAccount.walletUsdcBalance
+  // directly) has no fetch of its own - without this, it keeps showing
+  // whatever the local optimistic-update math last landed on, which starts
+  // at a mock value and never gets corrected by reality. Refresh on wallet
+  // connect, address change, and whenever the Wallet & Subscriptions page
+  // is opened, so that display is never more than one navigation stale.
+  useEffect(() => {
+    if (!isWalletConnected || !userAccount.address) return;
+    getArcWallet(userAccount.address)
+      .then((wallet) => {
+        if (wallet.no_data) return;
+        setUserAccount((prev) => ({ ...prev, walletUsdcBalance: wallet.usdc_balance ?? prev.walletUsdcBalance }));
+      })
+      .catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isWalletConnected, userAccount.address, currentView]);
 
   const createInvestigationFromApiResult = (address: string, network: EVMNetwork, result: AnalysisApiResult): TokenInvestigation => {
     const normalizedVerdict = result.verdict.toUpperCase();
