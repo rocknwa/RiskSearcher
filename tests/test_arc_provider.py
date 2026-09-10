@@ -131,9 +131,86 @@ class ArcProviderTests(unittest.TestCase):
         self.assertEqual(kwargs["id"], "wallet-2")
         self.assertEqual(kwargs["update_wallet_request"].ref_id, "0xuserwithmixedcase")
 
-    @patch.dict(os.environ, {"CIRCLE_API_KEY": "key", "CIRCLE_ENTITY_SECRET": "a" * 64}, clear=False)
+    @patch.dict(
+        os.environ,
+        {"CIRCLE_API_KEY": "key", "CIRCLE_ENTITY_SECRET": "a" * 64, "CIRCLE_WALLET_SET_ID": "ws-fixed"},
+        clear=False,
+    )
     @patch("rpc.arc_provider._get_client")
-    def test_get_wallet_balance_reads_native_usdc(self, mock_get_client):
+    def test_get_wallets_lookup_is_scoped_to_the_current_network(self, mock_get_client):
+        mock_get_client.return_value = Mock()
+        empty_lookup = Mock()
+        empty_lookup.data.wallets = []
+        wallet = Mock(id="wallet-3", address="0xDep3")
+        create_response = Mock()
+        create_response.data.wallets = [wallet]
+
+        with patch(
+            "circle.web3.developer_controlled_wallets.WalletsApi.get_wallets",
+            return_value=empty_lookup,
+        ) as get_wallets, patch(
+            "circle.web3.developer_controlled_wallets.WalletsApi.create_wallet",
+            return_value=create_response,
+        ), patch(
+            "circle.web3.developer_controlled_wallets.WalletsApi.update_wallet",
+        ):
+            arc_provider.get_or_create_wallet("0xUser3")
+
+        _, kwargs = get_wallets.call_args
+        self.assertEqual(kwargs["blockchain"], "ARC-TESTNET")
+
+    @patch.dict(
+        os.environ,
+        {
+            "CIRCLE_API_KEY": "key",
+            "CIRCLE_ENTITY_SECRET": "a" * 64,
+            "CIRCLE_WALLET_SET_ID": "ws-fixed",
+            "ARC_BLOCKCHAIN": "ARC",
+        },
+        clear=False,
+    )
+    @patch("rpc.arc_provider._get_client")
+    def test_arc_blockchain_env_var_switches_network_end_to_end(self, mock_get_client):
+        # Simulates flipping to mainnet: ARC_BLOCKCHAIN=ARC should reach
+        # every call site (wallet creation, the ref_id lookup, and
+        # transfers) with no code change, and must never return a wallet
+        # cached under the testnet namespace for the same user address.
+        mock_get_client.return_value = Mock()
+        empty_lookup = Mock()
+        empty_lookup.data.wallets = []
+        wallet = Mock(id="wallet-mainnet", address="0xMainnetDep")
+        create_response = Mock()
+        create_response.data.wallets = [wallet]
+
+        with patch(
+            "circle.web3.developer_controlled_wallets.WalletsApi.get_wallets",
+            return_value=empty_lookup,
+        ) as get_wallets, patch(
+            "circle.web3.developer_controlled_wallets.WalletsApi.create_wallet",
+            return_value=create_response,
+        ) as create_wallet, patch(
+            "circle.web3.developer_controlled_wallets.WalletsApi.update_wallet",
+        ):
+            result = arc_provider.get_or_create_wallet("0xUser4")
+
+        self.assertEqual(result["wallet_id"], "wallet-mainnet")
+        self.assertEqual(get_wallets.call_args.kwargs["blockchain"], "ARC")
+        create_kwargs = create_wallet.call_args.args[0]
+        self.assertEqual(create_kwargs.blockchains, ["ARC"])
+
+        # Now switch a fresh transfer and confirm it also uses ARC, not ARC-TESTNET.
+        transfer_response = Mock()
+        transfer_response.data.id = "tx-mainnet"
+        transfer_response.data.state = "INITIATED"
+        with patch(
+            "circle.web3.developer_controlled_wallets.TransactionsApi.create_developer_transaction_transfer",
+            return_value=transfer_response,
+        ) as transfer:
+            arc_provider.send_usdc("wallet-mainnet", "0xDest", 1.0)
+        sent_request = transfer.call_args.args[0]
+        self.assertEqual(sent_request.blockchain.actual_instance, "ARC")
+
+
         mock_get_client.return_value = Mock()
 
         native_token = Mock(is_native=True, symbol="USDC")

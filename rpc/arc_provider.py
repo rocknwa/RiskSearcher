@@ -39,6 +39,13 @@ _client = None
 _client_checked = False
 
 
+def _arc_blockchain() -> str:
+    """ARC-TESTNET by default; set ARC_BLOCKCHAIN=ARC to point this whole
+    module at Arc mainnet with no code change - just the env var plus real
+    (mainnet) CIRCLE_API_KEY / CIRCLE_ENTITY_SECRET / CIRCLE_WALLET_SET_ID."""
+    return os.environ.get("ARC_BLOCKCHAIN", "ARC-TESTNET").strip() or "ARC-TESTNET"
+
+
 def _unavailable(reason: str) -> dict:
     return {"no_data": True, "reason": reason}
 
@@ -126,8 +133,12 @@ def get_or_create_wallet(user_address: str) -> dict:
     if not key:
         return _unavailable("missing_user_address")
 
+    # Namespaced by network so a future mainnet switch (ARC_BLOCKCHAIN=ARC)
+    # can never accidentally reuse a cached testnet wallet, or vice versa.
+    cache_key = f"{_arc_blockchain()}:{key}"
+
     with _STATE_LOCK:
-        cached = _load_state().get("wallets", {}).get(key)
+        cached = _load_state().get("wallets", {}).get(cache_key)
     if cached:
         return {"no_data": False, "wallet_id": cached["wallet_id"], "deposit_address": cached["address"]}
 
@@ -143,19 +154,21 @@ def get_or_create_wallet(user_address: str) -> dict:
         # Cache miss doesn't mean "no wallet exists" - it may just mean the
         # local cache was wiped by a redeploy. Check Circle's own index by
         # ref_id before creating a new (empty) wallet for a returning user.
-        existing = api.get_wallets(wallet_set_id=wallet_set_id, ref_id=key)
+        # blockchain= scopes this to the current network for the same
+        # reason the local cache key is namespaced above.
+        existing = api.get_wallets(wallet_set_id=wallet_set_id, ref_id=key, blockchain=_arc_blockchain())
         existing_wallets = (existing.data.wallets or []) if existing.data else []
         if existing_wallets:
             wallet = existing_wallets[0]
             with _STATE_LOCK:
                 state = _load_state()
-                state.setdefault("wallets", {})[key] = {"wallet_id": wallet.id, "address": wallet.address}
+                state.setdefault("wallets", {})[cache_key] = {"wallet_id": wallet.id, "address": wallet.address}
                 _save_state(state)
             return {"no_data": False, "wallet_id": wallet.id, "deposit_address": wallet.address}
 
         request = dcw.CreateWalletRequest.from_dict({
             "walletSetId": wallet_set_id,
-            "blockchains": ["ARC-TESTNET"],
+            "blockchains": [_arc_blockchain()],
             "count": 1,
             "metadata": [{"name": f"riskSearcher-{key[:10]}"}],
         })
@@ -172,7 +185,7 @@ def get_or_create_wallet(user_address: str) -> dict:
 
         with _STATE_LOCK:
             state = _load_state()
-            state.setdefault("wallets", {})[key] = {"wallet_id": wallet.id, "address": wallet.address}
+            state.setdefault("wallets", {})[cache_key] = {"wallet_id": wallet.id, "address": wallet.address}
             _save_state(state)
 
         return {"no_data": False, "wallet_id": wallet.id, "deposit_address": wallet.address}
@@ -230,7 +243,7 @@ def send_usdc(wallet_id: str, destination_address: str, amount: float) -> dict:
             # and blockchain is the one that applies. Confirmed live: a run
             # without this field failed with "'tokenId' field may not be
             # empty when 'Blockchain' field is not set".
-            "blockchain": "ARC-TESTNET",
+            "blockchain": _arc_blockchain(),
         })
         response = api.create_developer_transaction_transfer(request)
         return {"no_data": False, "transaction_id": response.data.id, "status": response.data.state}

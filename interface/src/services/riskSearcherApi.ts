@@ -55,6 +55,7 @@ export function streamContractAnalysis(
   address: string,
   chain: string,
   handlers: AnalysisStreamHandlers,
+  userAddress?: string,
 ): () => void {
   if (!apiBaseUrl) {
     window.setTimeout(() => handlers.onError('The analysis service is not configured. Set VITE_API_BASE_URL and reload the app.'), 0);
@@ -64,6 +65,9 @@ export function streamContractAnalysis(
   const url = new URL(`${apiBaseUrl}/analyze`);
   url.searchParams.set('address', address);
   url.searchParams.set('chain', chain);
+  if (userAddress) {
+    url.searchParams.set('user_address', userAddress);
+  }
 
   const controller = new AbortController();
   let cancelled = false;

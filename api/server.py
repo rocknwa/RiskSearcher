@@ -28,6 +28,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from core.analyzer import analyze
+from db import scan_history_store
 from rpc import arc_provider
 
 app = FastAPI(title="RiskSearcher API")
@@ -57,7 +58,7 @@ def _sse_event(event_type: str, data: dict) -> str:
     return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
 
 
-def _run_analysis_stream(address: str, chain: str) -> Generator[str, None, None]:
+def _run_analysis_stream(address: str, chain: str, user_address: str = "") -> Generator[str, None, None]:
     """
     Runs analyze() in a background thread (since it's a long, blocking,
     synchronous call) and streams each progress message + the final result
@@ -71,7 +72,7 @@ def _run_analysis_stream(address: str, chain: str) -> Generator[str, None, None]
     def worker() -> None:
         try:
             result = analyze(address, chain=chain, on_progress=on_progress)
-            q.put(("result", {
+            result_payload = {
                 "verdict": result.verdict,
                 "severity": result.severity,
                 "score": result.score,
@@ -81,7 +82,21 @@ def _run_analysis_stream(address: str, chain: str) -> Generator[str, None, None]
                 "final_reason": getattr(result, "final_reason", ""),
                 "breakdown": result.breakdown,
                 "graph_evidence": getattr(result, "graph_evidence", None),
-            }))
+            }
+            q.put(("result", result_payload))
+
+            # Best-effort: history saving must never affect the scan result
+            # the user already received, or the stream that already
+            # completed successfully above.
+            if user_address:
+                try:
+                    scan_history_store.save_scan(user_address, {
+                        "contract_address": address,
+                        "chain": chain,
+                        **result_payload,
+                    })
+                except Exception as exc:
+                    print(f"    [HISTORY] Unexpected error saving scan: {exc}")
         except Exception as exc:
             q.put(("error", {"message": str(exc)}))
         finally:
@@ -102,13 +117,14 @@ def _run_analysis_stream(address: str, chain: str) -> Generator[str, None, None]
 def analyze_endpoint(
     address: str = Query(..., description="Contract address to analyze"),
     chain: str = Query("ethereum", description="Chain name, e.g. ethereum, base, arbitrum"),
+    user_address: str = Query("", description="Connected wallet address, for scan-history persistence. Optional - omitting it just means this scan isn't saved to history."),
 ):
     """
     Streams analysis progress and the final result as Server-Sent Events.
     Frontend usage: new EventSource(`${API_BASE}/analyze?address=...&chain=...`)
     """
     return StreamingResponse(
-        _run_analysis_stream(address, chain),
+        _run_analysis_stream(address, chain, user_address),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -116,6 +132,13 @@ def analyze_endpoint(
             "X-Accel-Buffering": "no",  # disable proxy buffering (nginx etc.) so SSE streams live
         },
     )
+
+
+@app.get("/history")
+def history_endpoint(address: str = Query(..., description="Connected wallet address")):
+    """Past scans for this user, most recent first. Never raises - a
+    Firestore problem comes back as {"no_data": true, "reason": "..."}."""
+    return scan_history_store.get_scan_history(address)
 
 
 class WithdrawRequest(BaseModel):
