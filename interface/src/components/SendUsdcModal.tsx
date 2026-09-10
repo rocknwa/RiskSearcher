@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { EVMNetwork } from '../types';
+import { getArcWallet, withdrawUsdc } from '../services/arcApi';
 
 interface SendUsdcModalProps {
   isOpen: boolean;
   onClose: () => void;
   walletBalance: number;
+  userAddress: string;
   onSendSuccess: (amount: number, recipient: string, network: EVMNetwork) => void;
 }
 
@@ -12,6 +14,7 @@ export const SendUsdcModal: React.FC<SendUsdcModalProps> = ({
   isOpen,
   onClose,
   walletBalance,
+  userAddress,
   onSendSuccess,
 }) => {
   const [recipient, setRecipient] = useState('');
@@ -20,9 +23,26 @@ export const SendUsdcModal: React.FC<SendUsdcModalProps> = ({
   const [step, setStep] = useState<'input' | 'review' | 'success'>('input');
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState('');
+  const [txId, setTxId] = useState<string | null>(null);
+  const [liveBalance, setLiveBalance] = useState<number | null>(null);
+  const [isLoadingBalance, setIsLoadingBalance] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setIsLoadingBalance(true);
+    getArcWallet(userAddress)
+      .then((wallet) => {
+        setIsLoadingBalance(false);
+        if (!wallet.no_data) setLiveBalance(wallet.usdc_balance ?? 0);
+      })
+      .catch(() => setIsLoadingBalance(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, userAddress]);
 
   if (!isOpen) return null;
 
+  // Real balance once fetched; the stale local prop only while it's loading.
+  const effectiveBalance = liveBalance ?? walletBalance;
   const numAmount = parseFloat(amount) || 0;
   const networkFee = 0.05;
   const totalDeduction = numAmount + networkFee;
@@ -41,8 +61,8 @@ export const SendUsdcModal: React.FC<SendUsdcModalProps> = ({
       return;
     }
 
-    if (totalDeduction > walletBalance) {
-      setError(`Insufficient balance. You need $${totalDeduction.toFixed(2)} USDC (including $0.05 network fee), but your wallet has $${walletBalance.toFixed(2)} USDC.`);
+    if (totalDeduction > effectiveBalance) {
+      setError(`Insufficient balance. You need $${totalDeduction.toFixed(2)} USDC (including $0.05 network fee), but your wallet has $${effectiveBalance.toFixed(2)} USDC.`);
       return;
     }
 
@@ -51,17 +71,31 @@ export const SendUsdcModal: React.FC<SendUsdcModalProps> = ({
 
   const handleConfirmSend = () => {
     setIsProcessing(true);
-    setTimeout(() => {
-      setIsProcessing(false);
-      onSendSuccess(numAmount, recipient, network);
-      setStep('success');
-      setTimeout(() => {
+    setError('');
+    withdrawUsdc(userAddress, recipient, numAmount)
+      .then((result) => {
+        setIsProcessing(false);
+        if (result.no_data) {
+          setError(`Transfer failed: ${result.reason || 'the Arc treasury service is unavailable.'}`);
+          setStep('input');
+          return;
+        }
+        setTxId(result.transaction_id ?? null);
+        onSendSuccess(numAmount, recipient, network);
+        setStep('success');
+        setTimeout(() => {
+          setStep('input');
+          setAmount('');
+          setRecipient('');
+          setTxId(null);
+          onClose();
+        }, 2200);
+      })
+      .catch((err: Error) => {
+        setIsProcessing(false);
+        setError(err.message);
         setStep('input');
-        setAmount('');
-        setRecipient('');
-        onClose();
-      }, 1800);
-    }, 1200);
+      });
   };
 
   return (
@@ -95,7 +129,7 @@ export const SendUsdcModal: React.FC<SendUsdcModalProps> = ({
             <div className="flex items-center justify-between bg-[#060e20] p-3 rounded-xl border border-[#222a3d]">
               <span className="font-mono text-xs text-[#8c909f]">Available Wallet Balance:</span>
               <span className="font-mono text-sm font-bold text-[#4edea3]">
-                ${walletBalance.toFixed(2)} USDC
+                {isLoadingBalance ? 'Checking Arc chain...' : `$${effectiveBalance.toFixed(2)} USDC`}
               </span>
             </div>
 
@@ -118,7 +152,7 @@ export const SendUsdcModal: React.FC<SendUsdcModalProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    const maxPossible = Math.max(0, walletBalance - 0.05);
+                    const maxPossible = Math.max(0, effectiveBalance - 0.05);
                     setAmount(maxPossible.toFixed(2));
                   }}
                   className="font-mono text-xs text-[#4cd7f6] hover:underline"
@@ -208,7 +242,7 @@ export const SendUsdcModal: React.FC<SendUsdcModalProps> = ({
               </div>
               <div className="flex items-center justify-between text-[#8c909f] text-[11px]">
                 <span>Wallet Balance After:</span>
-                <span>${(walletBalance - totalDeduction).toFixed(2)} USDC</span>
+                <span>${(effectiveBalance - totalDeduction).toFixed(2)} USDC</span>
               </div>
             </div>
 
@@ -248,16 +282,19 @@ export const SendUsdcModal: React.FC<SendUsdcModalProps> = ({
             <div className="w-12 h-12 rounded-full bg-[#00a572]/20 border border-[#00a572] flex items-center justify-center text-[#4edea3] mx-auto">
               <span className="material-symbols-outlined text-[28px]">check_circle</span>
             </div>
-            <h4 className="font-bold text-base text-[#dae2fd]">Demo transfer completed</h4>
+            <h4 className="font-bold text-base text-[#dae2fd]">Transfer submitted on Arc</h4>
             <p className="font-mono text-xs text-[#4edea3]">
-              ${numAmount.toFixed(2)} USDC sent successfully to {recipient.slice(0, 6)}...{recipient.slice(-4)}
+              ${numAmount.toFixed(2)} USDC sent to {recipient.slice(0, 6)}...{recipient.slice(-4)}
             </p>
+            {txId && (
+              <p className="font-mono text-[10px] text-[#8c909f] break-all">Arc tx: {txId}</p>
+            )}
           </div>
         )}
 
         <div className="pt-1 text-center">
           <p className="font-mono text-[10px] text-[#8c909f]">
-            Note: This sends funds directly from your personal wallet. RiskSearcher subscription credits are separate and cannot be sent.
+            Sends real USDC from your Arc Testnet wallet. RiskSearcher subscription credits are separate and cannot be sent.
           </p>
         </div>
       </div>

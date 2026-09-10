@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
-import { EVMNetwork } from '../types';
+import React, { useEffect, useState } from 'react';
+import { getArcWallet } from '../services/arcApi';
 
 interface AddFundsModalProps {
   isOpen: boolean;
+  initialTab?: 'receive' | 'buy';
   onClose: () => void;
   walletAddress: string;
   onAddFundsSuccess: (amount: number, method: 'receive' | 'buy') => void;
@@ -10,38 +11,70 @@ interface AddFundsModalProps {
 
 export const AddFundsModal: React.FC<AddFundsModalProps> = ({
   isOpen,
+  initialTab,
   onClose,
   walletAddress,
   onAddFundsSuccess,
 }) => {
-  const [activeTab, setActiveTab] = useState<'receive' | 'buy'>('receive');
-  const [selectedNetwork, setSelectedNetwork] = useState<EVMNetwork>('Base');
+  const [activeTab, setActiveTab] = useState<'receive' | 'buy'>(initialTab ?? 'receive');
   const [copied, setCopied] = useState(false);
   const [buyAmount, setBuyAmount] = useState('50');
   const [paymentMethod, setPaymentMethod] = useState<'card' | 'apple' | 'bank'>('card');
   const [isProcessing, setIsProcessing] = useState(false);
   const [notification, setNotification] = useState<string | null>(null);
+  const [depositAddress, setDepositAddress] = useState<string | null>(null);
+  const [liveBalance, setLiveBalance] = useState<number | null>(null);
+  const [lastSeenBalance, setLastSeenBalance] = useState<number | null>(null);
+  const [walletError, setWalletError] = useState<string | null>(null);
+  const [isLoadingWallet, setIsLoadingWallet] = useState(false);
+
+  const refreshArcWallet = () => {
+    setIsLoadingWallet(true);
+    setWalletError(null);
+    getArcWallet(walletAddress)
+      .then((wallet) => {
+        setIsLoadingWallet(false);
+        if (wallet.no_data) {
+          setWalletError(wallet.reason || 'Arc treasury service unavailable');
+          return;
+        }
+        setDepositAddress(wallet.deposit_address ?? null);
+        const balance = wallet.usdc_balance ?? 0;
+        setLiveBalance(balance);
+        // A rising real balance means a deposit landed since we last checked —
+        // credit the local ledger with the observed delta, not a fake amount.
+        if (lastSeenBalance !== null && balance > lastSeenBalance) {
+          onAddFundsSuccess(balance - lastSeenBalance, 'receive');
+        }
+        setLastSeenBalance(balance);
+      })
+      .catch((err: Error) => {
+        setIsLoadingWallet(false);
+        setWalletError(err.message);
+      });
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      setActiveTab(initialTab ?? 'receive');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, initialTab]);
+
+  useEffect(() => {
+    if (isOpen && activeTab === 'receive') {
+      refreshArcWallet();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, activeTab]);
 
   if (!isOpen) return null;
 
   const handleCopyAddress = () => {
-    navigator.clipboard.writeText(walletAddress);
+    if (!depositAddress) return;
+    navigator.clipboard.writeText(depositAddress);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  };
-
-  const handleSimulateReceive = () => {
-    setIsProcessing(true);
-    setNotification('Waiting for incoming USDC...');
-    setTimeout(() => {
-      setIsProcessing(false);
-      onAddFundsSuccess(25.0, 'receive');
-      setNotification('+$25.00 USDC received into your wallet!');
-      setTimeout(() => {
-        setNotification(null);
-        onClose();
-      }, 1500);
-    }, 1200);
   };
 
   const handleBuyOnramp = (e: React.FormEvent) => {
@@ -119,58 +152,47 @@ export const AddFundsModal: React.FC<AddFundsModalProps> = ({
           </div>
         )}
 
-        {/* Tab 1: Receive USDC */}
+        {/* Tab 1: Receive USDC (real Arc Testnet wallet) */}
         {activeTab === 'receive' && (
           <div className="space-y-4">
-            {/* Network Selector */}
-            <div className="space-y-1">
-              <label className="font-mono text-xs text-[#8c909f] block">Select Network</label>
-              <div className="grid grid-cols-3 gap-2">
-                {(['Base', 'Arbitrum', 'Ethereum'] as EVMNetwork[]).map((net) => (
-                  <button
-                    key={net}
-                    type="button"
-                    onClick={() => setSelectedNetwork(net)}
-                    className={`py-1.5 px-2 rounded-lg border font-mono text-xs transition-colors ${
-                      selectedNetwork === net
-                        ? 'bg-[#222a3d] border-[#4cd7f6] text-[#dae2fd]'
-                        : 'bg-[#060e20] border-[#222a3d] text-[#8c909f] hover:bg-[#171f33]'
-                    }`}
-                  >
-                    {net}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Simulated QR Code */}
-            <div className="bg-[#060e20] p-4 rounded-xl border border-[#222a3d] flex flex-col items-center justify-center space-y-3">
-              <div className="w-36 h-36 bg-white p-2 rounded-lg flex items-center justify-center shadow-inner">
-                {/* SVG mock QR pattern */}
-                <svg className="w-full h-full" viewBox="0 0 100 100" fill="none">
-                  <rect width="100" height="100" fill="white" />
-                  <path d="M10 10h30v30h-30z M15 15h20v20h-20z M60 10h30v30h-30z M65 15h20v20h-20z M10 60h30v30h-30z M15 65h20v20h-20z M45 10h10v10h-10z M45 30h10v10h-10z M45 50h10v10h-10z M10 45h10v10h-10z M30 45h10v10h-10z M50 70h20v20h-20z M75 50h15v15h-15z M60 80h10v10h-10z M80 75h10v15h-10z" fill="#0b1326" />
-                </svg>
-              </div>
-              <span className="font-mono text-[11px] text-[#8c909f]">
-                Deposit directly on <strong className="text-[#dae2fd]">{selectedNetwork}</strong>
+            <div className="bg-[#060e20] p-3 rounded-xl border border-[#222a3d] flex items-center justify-between">
+              <span className="font-mono text-xs text-[#8c909f]">Network</span>
+              <span className="font-mono text-xs text-[#4cd7f6] font-semibold flex items-center gap-1.5">
+                <span className="material-symbols-outlined text-[14px]">bolt</span>
+                Arc Testnet
               </span>
             </div>
 
-            {/* Address Display */}
+            {walletError && (
+              <div className="bg-[#93000a]/20 border border-[#ffb4ab]/30 p-3 rounded-xl font-mono text-xs text-[#ffb4ab] leading-relaxed">
+                Arc wallet unavailable: {walletError}
+              </div>
+            )}
+
+            {/* Live Balance */}
+            <div className="bg-[#060e20] p-4 rounded-xl border border-[#222a3d] flex flex-col items-center justify-center space-y-1.5">
+              <span className="font-mono text-[10px] text-[#8c909f] uppercase">Live Wallet Balance</span>
+              <span className="font-mono text-2xl font-bold text-[#4edea3]">
+                {isLoadingWallet ? '—' : `$${(liveBalance ?? 0).toFixed(2)}`}
+              </span>
+              <span className="font-mono text-[10px] text-[#8c909f]">USDC on Arc Testnet</span>
+            </div>
+
+            {/* Real Address Display */}
             <div className="space-y-1">
               <div className="flex items-center justify-between">
-                <span className="font-mono text-xs text-[#8c909f]">Your USDC Wallet Address:</span>
-                <span className="font-mono text-[10px] text-[#4edea3]">Only send USDC on {selectedNetwork}</span>
+                <span className="font-mono text-xs text-[#8c909f]">Your Arc Testnet Deposit Address:</span>
+                <span className="font-mono text-[10px] text-[#4edea3]">Only send testnet USDC on Arc</span>
               </div>
               <div className="bg-[#060e20] p-3 rounded-lg border border-[#222a3d] flex items-center justify-between gap-2">
                 <span className="font-mono text-xs text-[#dae2fd] truncate select-all">
-                  {walletAddress}
+                  {depositAddress || (isLoadingWallet ? 'Loading your Arc wallet...' : 'Unavailable')}
                 </span>
                 <button
                   type="button"
+                  disabled={!depositAddress}
                   onClick={handleCopyAddress}
-                  className="bg-[#222a3d] hover:bg-[#2d3449] text-[#dae2fd] px-3 py-1 rounded font-mono text-xs flex items-center gap-1.5 transition-colors shrink-0"
+                  className="bg-[#222a3d] hover:bg-[#2d3449] disabled:opacity-50 text-[#dae2fd] px-3 py-1 rounded font-mono text-xs flex items-center gap-1.5 transition-colors shrink-0"
                 >
                   <span className="material-symbols-outlined text-[14px]">
                     {copied ? 'check' : 'content_copy'}
@@ -180,20 +202,46 @@ export const AddFundsModal: React.FC<AddFundsModalProps> = ({
               </div>
             </div>
 
-            {/* Simulation Demo Trigger */}
             <button
               type="button"
-              disabled={isProcessing}
-              onClick={handleSimulateReceive}
-              className="w-full py-2.5 bg-[#222a3d] hover:bg-[#2d3449] border border-[#4cd7f6]/40 text-[#4cd7f6] rounded-xl font-mono text-xs font-semibold flex items-center justify-center gap-2 transition-colors"
+              disabled={isLoadingWallet}
+              onClick={refreshArcWallet}
+              className="w-full py-2.5 bg-[#222a3d] hover:bg-[#2d3449] border border-[#4cd7f6]/40 text-[#4cd7f6] rounded-xl font-mono text-xs font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-60"
             >
-              <span className="material-symbols-outlined text-[16px]">sim_card_download</span>
-              <span>{isProcessing ? 'Waiting for incoming USDC...' : 'Simulate Incoming Transfer (+$25.00 USDC)'}</span>
+              <span className={`material-symbols-outlined text-[16px] ${isLoadingWallet ? 'animate-spin' : ''}`}>
+                {isLoadingWallet ? 'sync' : 'refresh'}
+              </span>
+              <span>{isLoadingWallet ? 'Checking Arc chain...' : 'Refresh Balance'}</span>
             </button>
+
+            <button
+              type="button"
+              disabled={!depositAddress}
+              onClick={() => {
+                if (depositAddress) {
+                  navigator.clipboard.writeText(depositAddress);
+                }
+                window.open('https://faucet.circle.com', '_blank', 'noopener,noreferrer');
+              }}
+              className="w-full py-2.5 bg-[#4edea3]/10 hover:bg-[#4edea3]/20 border border-[#4edea3]/40 text-[#4edea3] rounded-xl font-mono text-xs font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+            >
+              <span className="material-symbols-outlined text-[16px]">water_drop</span>
+              <span>Get Free Testnet USDC</span>
+            </button>
+            <p className="font-mono text-[10px] text-[#8c909f] text-center -mt-2">
+              Opens Circle's official faucet in a new tab and copies your address above — just paste, pick Arc Testnet, and submit. Free, no account needed, up to 10 USDC every 24h.
+            </p>
           </div>
         )}
 
-        {/* Tab 2: Buy / On-ramp */}
+        {/* Tab 2: Buy / On-ramp (simulated — no fiat on-ramp partner integrated yet) */}
+        {activeTab === 'buy' && (
+          <div className="bg-[#222a3d]/40 border border-[#222a3d] rounded-lg px-3 py-2 -mt-2">
+            <span className="font-mono text-[10px] text-[#8c909f]">
+              Simulated for this demo — no live fiat on-ramp partner is connected yet.
+            </span>
+          </div>
+        )}
         {activeTab === 'buy' && (
           <form onSubmit={handleBuyOnramp} className="space-y-4">
             <div className="space-y-1.5">
@@ -284,7 +332,7 @@ export const AddFundsModal: React.FC<AddFundsModalProps> = ({
 
         <div className="pt-1 text-center">
           <p className="font-mono text-[10px] text-[#8c909f]">
-            Note: This funds your personal Web3 wallet. This money remains yours and can be sent or withdrawn at any time.
+            Receive USDC uses your real Arc Testnet wallet — this money remains yours and can be sent or withdrawn at any time. The Buy tab is simulated.
           </p>
         </div>
       </div>

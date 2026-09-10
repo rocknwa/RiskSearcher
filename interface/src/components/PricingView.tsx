@@ -1,5 +1,6 @@
 import React from 'react';
 import { UserAccountState } from '../types';
+import { SUBSCRIPTION_PRICE_USDC } from '../config';
 
 interface PricingViewProps {
   onOpenSubscriptionModal: () => void;
@@ -123,7 +124,7 @@ export const PricingView: React.FC<PricingViewProps> = ({
               )}
             </div>
             <div className="mt-4">
-              <span className="text-3xl sm:text-4xl font-bold text-[#dae2fd]">$20</span>
+              <span className="text-3xl sm:text-4xl font-bold text-[#dae2fd]">${SUBSCRIPTION_PRICE_USDC}</span>
               <span className="text-sm text-[#8c909f]"> / month USDC</span>
             </div>
             <p className="text-xs sm:text-sm text-[#c2c6d6] mt-2 leading-relaxed">

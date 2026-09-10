@@ -27,6 +27,20 @@ export interface GraphEvidence {
   pools_data_reliable?: boolean;
 }
 
+export interface ArcWallet {
+  no_data: boolean;
+  reason?: string;
+  deposit_address?: string;
+  usdc_balance?: number | null;
+}
+
+export interface ArcTransferResult {
+  no_data: boolean;
+  reason?: string;
+  transaction_id?: string;
+  status?: string;
+}
+
 /** The final `result` event emitted by the FastAPI `/analyze` SSE endpoint. */
 export interface AnalysisApiResult {
   verdict: string;
