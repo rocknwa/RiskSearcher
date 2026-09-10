@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { paySubscription } from '../services/arcApi';
+import React, { useEffect, useState } from 'react';
+import { getArcWallet, paySubscription } from '../services/arcApi';
 
 interface SubscriptionModalProps {
   isOpen: boolean;
@@ -22,12 +22,39 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
   const [step, setStep] = useState<'checkout' | 'success'>('checkout');
   const [error, setError] = useState('');
   const [txId, setTxId] = useState<string | null>(null);
+  const [liveBalance, setLiveBalance] = useState<number | null>(null);
+  const [isLoadingBalance, setIsLoadingBalance] = useState(false);
+  const [balanceError, setBalanceError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setIsLoadingBalance(true);
+    setBalanceError(null);
+    getArcWallet(userAddress)
+      .then((wallet) => {
+        setIsLoadingBalance(false);
+        if (wallet.no_data) {
+          setBalanceError(wallet.reason || 'Arc treasury service unavailable');
+          return;
+        }
+        setLiveBalance(wallet.usdc_balance ?? 0);
+      })
+      .catch((err: Error) => {
+        setIsLoadingBalance(false);
+        setBalanceError(err.message);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, userAddress]);
 
   if (!isOpen) return null;
 
   const planPrice = 20.00;
-  const hasSufficientBalance = walletBalance >= planPrice;
-  const neededMore = Math.max(0, planPrice - walletBalance);
+  // Use the real, freshly-fetched balance once we have it. Fall back to the
+  // stale local prop only while the real fetch is still in flight, so the
+  // UI never lets a stale mock number drive a real payment decision.
+  const effectiveBalance = liveBalance ?? walletBalance;
+  const hasSufficientBalance = !isLoadingBalance && liveBalance !== null && effectiveBalance >= planPrice;
+  const neededMore = Math.max(0, planPrice - effectiveBalance);
 
   const handlePaySubscription = () => {
     if (!hasSufficientBalance) return;
@@ -125,9 +152,14 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
               <div className="flex items-center justify-between font-mono text-xs">
                 <span className="text-[#8c909f]">Your Wallet Balance:</span>
                 <span className={`font-bold ${hasSufficientBalance ? 'text-[#4edea3]' : 'text-[#ffb4ab]'}`}>
-                  ${walletBalance.toFixed(2)} USDC
+                  {isLoadingBalance ? 'Checking Arc chain...' : `$${effectiveBalance.toFixed(2)} USDC`}
                 </span>
               </div>
+              {balanceError && (
+                <p className="font-mono text-[10px] text-[#ffb4ab]">
+                  Live balance unavailable: {balanceError}
+                </p>
+              )}
               <div className="flex items-center justify-between font-mono text-xs border-t border-[#222a3d]/70 pt-2">
                 <span className="text-[#8c909f]">Subscription Price:</span>
                 <span className="text-[#dae2fd] font-bold">$20.00 USDC</span>
@@ -135,7 +167,12 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
             </div>
 
             {/* Insufficient Balance State */}
-            {!hasSufficientBalance ? (
+            {isLoadingBalance ? (
+              <div className="bg-[#060e20] p-3.5 rounded-xl border border-[#222a3d] flex items-center gap-2">
+                <span className="material-symbols-outlined animate-spin text-[16px] text-[#4cd7f6]">sync</span>
+                <span className="font-mono text-xs text-[#8c909f]">Checking your real Arc wallet balance...</span>
+              </div>
+            ) : !hasSufficientBalance ? (
               <div className="bg-[#93000a]/20 border border-[#ffb4ab]/30 p-3.5 rounded-xl space-y-3">
                 <div className="flex items-start gap-2">
                   <span className="material-symbols-outlined text-[#ffb4ab] text-[18px] shrink-0 mt-0.5">

@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { EVMNetwork } from '../types';
-import { withdrawUsdc } from '../services/arcApi';
+import { getArcWallet, withdrawUsdc } from '../services/arcApi';
 
 interface SendUsdcModalProps {
   isOpen: boolean;
@@ -24,9 +24,25 @@ export const SendUsdcModal: React.FC<SendUsdcModalProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState('');
   const [txId, setTxId] = useState<string | null>(null);
+  const [liveBalance, setLiveBalance] = useState<number | null>(null);
+  const [isLoadingBalance, setIsLoadingBalance] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setIsLoadingBalance(true);
+    getArcWallet(userAddress)
+      .then((wallet) => {
+        setIsLoadingBalance(false);
+        if (!wallet.no_data) setLiveBalance(wallet.usdc_balance ?? 0);
+      })
+      .catch(() => setIsLoadingBalance(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, userAddress]);
 
   if (!isOpen) return null;
 
+  // Real balance once fetched; the stale local prop only while it's loading.
+  const effectiveBalance = liveBalance ?? walletBalance;
   const numAmount = parseFloat(amount) || 0;
   const networkFee = 0.05;
   const totalDeduction = numAmount + networkFee;
@@ -45,8 +61,8 @@ export const SendUsdcModal: React.FC<SendUsdcModalProps> = ({
       return;
     }
 
-    if (totalDeduction > walletBalance) {
-      setError(`Insufficient balance. You need $${totalDeduction.toFixed(2)} USDC (including $0.05 network fee), but your wallet has $${walletBalance.toFixed(2)} USDC.`);
+    if (totalDeduction > effectiveBalance) {
+      setError(`Insufficient balance. You need $${totalDeduction.toFixed(2)} USDC (including $0.05 network fee), but your wallet has $${effectiveBalance.toFixed(2)} USDC.`);
       return;
     }
 
@@ -113,7 +129,7 @@ export const SendUsdcModal: React.FC<SendUsdcModalProps> = ({
             <div className="flex items-center justify-between bg-[#060e20] p-3 rounded-xl border border-[#222a3d]">
               <span className="font-mono text-xs text-[#8c909f]">Available Wallet Balance:</span>
               <span className="font-mono text-sm font-bold text-[#4edea3]">
-                ${walletBalance.toFixed(2)} USDC
+                {isLoadingBalance ? 'Checking Arc chain...' : `$${effectiveBalance.toFixed(2)} USDC`}
               </span>
             </div>
 
@@ -136,7 +152,7 @@ export const SendUsdcModal: React.FC<SendUsdcModalProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    const maxPossible = Math.max(0, walletBalance - 0.05);
+                    const maxPossible = Math.max(0, effectiveBalance - 0.05);
                     setAmount(maxPossible.toFixed(2));
                   }}
                   className="font-mono text-xs text-[#4cd7f6] hover:underline"
@@ -226,7 +242,7 @@ export const SendUsdcModal: React.FC<SendUsdcModalProps> = ({
               </div>
               <div className="flex items-center justify-between text-[#8c909f] text-[11px]">
                 <span>Wallet Balance After:</span>
-                <span>${(walletBalance - totalDeduction).toFixed(2)} USDC</span>
+                <span>${(effectiveBalance - totalDeduction).toFixed(2)} USDC</span>
               </div>
             </div>
 
