@@ -148,7 +148,7 @@ See [`REPRODUCTION.md`](./REPRODUCTION.md) for the complete reproduction guide, 
 
 ## 6. Architecture
 
-![RiskSearcher system architecture — frontend, backend, analysis pipeline, The Graph, Circle Arc, and Firestore](docs/architecture.svg)
+![RiskSearcher system architecture — frontend, backend, analysis pipeline, The Graph, Circle Arc, and Firestore](architecture.svg)
 
 ```text
 RiskSearcher/
