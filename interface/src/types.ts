@@ -9,6 +9,27 @@ export type EVMNetwork =
 
 export type RiskVerdict = 'UNSAFE' | 'SAFE' | 'THREAT' | 'MALICIOUS' | 'VERIFIED SAFE';
 
+export interface ScanHistoryRecord {
+  doc_id: string;
+  contract_address: string;
+  chain: string;
+  verdict: string;
+  severity: string;
+  score: number;
+  rule_score: number | null;
+  score_source: string | null;
+  verdict_source: string | null;
+  final_reason: string;
+  breakdown: string[];
+  saved_at: string | null;
+}
+
+export interface ScanHistoryResponse {
+  no_data: boolean;
+  reason?: string;
+  records?: ScanHistoryRecord[];
+}
+
 export interface AnalysisProgressEvent {
   message: string;
 }

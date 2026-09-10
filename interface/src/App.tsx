@@ -22,6 +22,15 @@ import {
 import { AnalysisApiResult, AnalysisStreamHandlers, TokenInvestigation, EVMNetwork, UserAccountState, LedgerTransaction, RiskVerdict, VulnerabilityFlag } from './types';
 import { streamContractAnalysis } from './services/riskSearcherApi';
 import { getArcWallet } from './services/arcApi';
+import { getScanHistory } from './services/historyApi';
+
+// Reverse of the chainByNetwork map used when sending a scan request -
+// needed to turn a saved history record's plain chain string back into
+// the EVMNetwork label the UI expects.
+const NETWORK_BY_CHAIN: Record<string, EVMNetwork> = {
+  ethereum: 'Ethereum', base: 'Base', arbitrum: 'Arbitrum', optimism: 'Optimism',
+  bsc: 'BNB Chain', polygon: 'Polygon', avalanche: 'Avalanche',
+};
 
 export default function App() {
   const [currentView, setCurrentView] = useState<'landing' | 'scanner' | 'accounts' | 'supported-chains' | 'pricing' | 'documentation' | 'how-it-works'>('landing');
@@ -90,6 +99,32 @@ export default function App() {
     };
   };
 
+  // Wallet connect doesn't just mean "sign in" - RiskSearcher's own scan
+  // history (as opposed to the Arc wallet balance above) previously lived
+  // only in local React state, so it reset on every refresh and wasn't
+  // scoped to which address was connected at all. This loads whatever
+  // Firestore actually has for this address and merges it in, deduplicated
+  // by the real Firestore doc id so this can safely re-run.
+  useEffect(() => {
+    if (!isWalletConnected || !userAccount.address) return;
+    getScanHistory(userAccount.address)
+      .then((response) => {
+        if (response.no_data || !response.records?.length) return;
+        const historyInvestigations = response.records.map((record) => {
+          const network = (NETWORK_BY_CHAIN[record.chain] ?? 'Ethereum') as EVMNetwork;
+          const investigation = createInvestigationFromApiResult(record.contract_address, network, record);
+          return { ...investigation, id: `history-${record.doc_id}` };
+        });
+        setInvestigations((previous) => {
+          const existingIds = new Set(previous.map((item) => item.id));
+          const newOnes = historyInvestigations.filter((item) => !existingIds.has(item.id));
+          return [...newOnes, ...previous];
+        });
+      })
+      .catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isWalletConnected, userAccount.address]);
+
   const triggerScanDirect = (address: string, network: EVMNetwork, handlers: AnalysisStreamHandlers) => {
     // A history entry is evidence from a prior run, not a cache hit. Always
     // request a fresh backend analysis so a reviewer can detect changed risk.
@@ -113,7 +148,7 @@ export default function App() {
         handlers.onResult(result);
       },
       onError: handlers.onError,
-    });
+    }, userAccount.address);
   };
 
   const handleStartScan = (address: string, network: EVMNetwork, handlers?: AnalysisStreamHandlers) => {
