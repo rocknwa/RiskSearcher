@@ -148,27 +148,38 @@ See [`REPRODUCTION.md`](./REPRODUCTION.md) for the complete reproduction guide, 
 
 ## 6. Architecture
 
+![RiskSearcher system architecture — frontend, backend, analysis pipeline, The Graph, Circle Arc, and Firestore](docs/architecture.svg)
+
 ```text
 RiskSearcher/
+├── api/
+│   └── server.py          # FastAPI + SSE — /analyze, /arc/*, /history (long-lived server, not serverless)
 ├── core/
-│   ├── rules.py         # Bytecode selector + opcode pattern matching (integer byte-value comparisons)
-│   ├── scoring.py       # Rule-based risk score computation
-│   ├── analyzer.py      # Orchestrator: rules -> specialist -> judge -> report, explicit verdict branch
-│   └── tx_analysis.py   # Behavioral transaction-risk checks (real-value filtered)
+│   ├── rules.py            # Bytecode selector + opcode pattern matching (integer byte-value comparisons)
+│   ├── scoring.py          # Rule-based risk score computation
+│   ├── analyzer.py         # Orchestrator: rules -> Graph evidence -> specialist -> judge -> report
+│   └── tx_analysis.py      # Behavioral transaction-risk checks (real-value filtered)
 ├── rpc/
-│   └── provider.py      # Etherscan V2 + Alchemy multi-chain source/bytecode/transfer fetches
+│   ├── provider.py         # Etherscan V2 + Alchemy multi-chain source/bytecode/transfer fetches
+│   ├── graph_provider.py   # The Graph Gateway — live Uniswap V3 liquidity evidence (ETHOnline 2026)
+│   └── arc_provider.py     # Circle Developer-Controlled Wallets on Arc — treasury ops (ETHOnline 2026)
 ├── llm/
-│   └── client.py         # Tiered specialist + judge client (Anthropic -> AgentRouter multi-model fallback)
+│   └── client.py           # Tiered specialist + judge client (Anthropic -> OpenRouter -> Groq -> AgentRouter)
 ├── db/
-│   ├── vector_store.py  # FAISS similarity search against scam patterns (contamination-guarded writes)
-│   └── patterns.json    # Seeded scam-pattern corpus
+│   ├── vector_store.py     # FAISS similarity search against scam patterns (contamination-guarded writes)
+│   ├── scan_history_store.py  # Firestore-backed per-address scan history (ETHOnline 2026)
+│   └── patterns.json       # Seeded scam-pattern corpus
+├── interface/               # React + Vite frontend (deployed on Vercel)
+│   └── src/
+│       ├── services/        # riskSearcherApi.ts (SSE), arcApi.ts, historyApi.ts
+│       └── components/      # ScannerView, AccountsView, AddFundsModal, SubscriptionModal, etc.
 ├── scripts/
 │   └── run_ground_truth.py  # Runs the full ground-truth set end-to-end
-├── tests/                # Regression tests, including verdict-branching and behavioral-filter tests
-├── main.py               # Interactive CLI entry point
-├── config.env             # Template — copy to .env
-├── PRIOR_STATE.md         # Stable record of what existed before ETHOnline 2026
-├── REPRODUCTION.md        # Step-by-step reproduction guide
+├── tests/                   # 42 tests: verdict-branching, behavioral filters, Graph, Arc, history
+├── main.py                  # Interactive CLI entry point (rules + LLM pipeline, no API server needed)
+├── config.env                # Template — copy to .env
+├── PRIOR_STATE.md            # Stable record of what existed before ETHOnline 2026
+├── REPRODUCTION.md           # Step-by-step reproduction guide
 └── requirements.txt
 ```
 
@@ -200,3 +211,37 @@ Shrimp and Dolphin are near-identical in raw transfer *count* but completely dif
 ## 9. Security note
 
 Keep secrets and provider keys in local environment files only; do not commit them to source control. Full contract source is sent to configured LLM providers as part of specialist/judge prompts — review your provider's data-handling terms if that matters for your use case.
+
+---
+
+## 10. ETHOnline 2026 — Track Submissions
+
+RiskSearcher is submitted in the **Continuity pool** (extending the pre-existing repo documented in [`PRIOR_STATE.md`](./PRIOR_STATE.md)) for two tracks. Both integrations are live, tested, and load-bearing — not stubs added for qualification.
+
+### 10.1 The Graph — Best AI Tooling or AI Use Case (Continuity)
+
+RiskSearcher is a **risk monitor** (the track's own example category — *"research assistants, trading and execution agents, portfolio copilots, risk monitors"*), not a tooling submission, so the reusable-infrastructure bar applies to the tooling half of the track, not to this.
+
+- **Live data, not mocked:** [`rpc/graph_provider.py`](./rpc/graph_provider.py) queries The Graph's Gateway for the Uniswap V3 Ethereum-mainnet subgraph — real total liquidity, pool count, first-swap timestamp, and 24h/7d swap volume, via a Subgraph Studio API key.
+- **Load-bearing use:** this evidence is injected directly into the LLM specialist's prompt ([`core/analyzer.py`](./core/analyzer.py)), which is explicitly instructed to reason about thin/new liquidity and volume-to-liquidity mismatches as legitimacy signals — not just display raw numbers.
+- **Honest degradation:** if `token.poolCount` and the merged pool query ever disagree (observed once against live Dai data — TVL populated, pool-level fields empty), the pool-level fields are marked `pools_data_reliable: false` and shown as unavailable rather than a misleading confirmed zero — never presented to the specialist or the report as a false signal.
+- **Visible in the product**, not just the backend: a "Live Liquidity — The Graph" panel renders real TVL, pool count, pool age, and swap volume directly in the scan report UI.
+
+### 10.2 Circle Arc — Treasury / FX Track
+
+- **Real treasury, not a mock wallet:** every connected user gets an actual Circle Developer-Controlled Wallet on Arc, created via [`rpc/arc_provider.py`](./rpc/arc_provider.py). Add Funds, Send, Withdraw, and Subscription payments are genuine on-chain USDC transfers (USDC is Arc's native gas asset), not `setTimeout`-simulated UI states.
+- **Deployment-ready on Arc mainnet:** every blockchain reference is controlled by one `ARC_BLOCKCHAIN` environment variable (defaults to `ARC-TESTNET`) — switching to mainnet is a config change, not a code change, verified by a test that flips the variable and confirms it reaches wallet creation, lookup, *and* transfers.
+- **Resilient to Render's ephemeral disk:** wallet identity is keyed by Circle's own `ref_id` index, not just a local cache file — confirmed live: a redeploy that wiped the local cache still resolved the same user back to their same real wallet instead of silently minting a new, empty one.
+- **Demo-safe pricing:** the subscription price is configurable (`VITE_SUBSCRIPTION_PRICE_USDC`, default $5) specifically so a tester using Circle's public testnet faucet can complete a full subscribe-and-test cycle without running out of funds mid-demo.
+
+### 10.3 What each track's evidence looks like end-to-end
+
+| Requirement | Where to see it |
+|---|---|
+| Graph: live data feeding real reasoning | Run a scan (`main.py` or the deployed app) on a token with a Uniswap V3 pool — see the "Live Liquidity" section of the report and the specialist's reasoning about it |
+| Graph: honest degradation | `tests/test_graph_provider.py::test_nonzero_tvl_with_zero_pools_is_marked_unreliable` |
+| Arc: real transfer | `POST /arc/withdraw` or `/arc/subscribe` — returns a real Circle transaction ID, verifiable on Arc Testnet |
+| Arc: mainnet-ready | `tests/test_arc_provider.py::test_arc_blockchain_env_var_switches_network_end_to_end` |
+| Arc: redeploy-resilient identity | `tests/test_arc_provider.py::test_finds_existing_wallet_via_ref_id_after_cache_loss` |
+
+Also live in this submission, not yet reflected in the architecture diagram above: real, per-address **scan history** persisted in Firestore (`db/scan_history_store.py`), so a returning user sees their own past scans instead of a session-only list. This isn't a track requirement for Graph or Arc — it's a product gap that came up during testing and was worth fixing regardless.
