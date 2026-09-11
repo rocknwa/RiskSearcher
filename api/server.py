@@ -255,12 +255,20 @@ def world_id_verify_endpoint(payload: WorldIdVerifyRequest = Body(...)):
 
 
 @app.get("/world-id/status")
-def world_id_status_endpoint(nullifier: str = Query(..., description="World ID nullifier for this human")):
-    """Check whether this human (by nullifier) already claimed their
-    trial, without claiming it. Called on app load with a nullifier the
-    frontend stored locally after a successful verify, so returning users
-    don't need to redo Selfie Check every session."""
-    return world_id_store.get_claim_status(nullifier)
+def world_id_status_endpoint(
+    nullifier: str = Query("", description="World ID nullifier for this human. Provide this OR address."),
+    address: str = Query("", description="Wallet address. Used when no nullifier is cached locally yet - e.g. a device/browser that never itself completed Selfie Check, such as switching from mobile to desktop with the same wallet."),
+):
+    """Check whether this human already claimed their trial, without
+    claiming it. Prefers nullifier (exact, and how the frontend restores
+    state on the device that actually completed Selfie Check); falls back
+    to a wallet-address lookup for a device with no locally-cached
+    nullifier. Either lookup is read-only - neither claims a trial."""
+    if nullifier:
+        return world_id_store.get_claim_status(nullifier)
+    if address:
+        return world_id_store.get_claim_status_by_wallet_address(address)
+    raise HTTPException(status_code=400, detail="Provide either nullifier or address")
 
 
 @app.get("/debug/setup-entity-secret")
