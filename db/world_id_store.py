@@ -146,3 +146,50 @@ def get_claim_status(nullifier: str) -> dict:
     except Exception as exc:
         print(f"    [WORLD_ID] Failed to fetch claim status: {exc}")
         return _unavailable("fetch_failed")
+
+
+def get_claim_status_by_wallet_address(wallet_address: str) -> dict:
+    """Same purpose as get_claim_status, but looked up by wallet address
+    instead of nullifier - needed because the nullifier is only known on
+    whichever device/browser actually completed Selfie Check (it's cached
+    in that browser's localStorage as a UX convenience, and localStorage
+    never syncs across devices). A person who verified on their phone and
+    then opens the same wallet on desktop has no nullifier to check with
+    there, but does have the same wallet address, which IS present on the
+    claim record (see claim_trial). This does not change what the ledger
+    is keyed on - claim_trial's Firestore document ID is still the
+    nullifier, which remains the actual Sybil-defense mechanism. This is
+    only a read-only convenience lookup for restoring UI state.
+
+    Note: unlike get_claim_status, this can't distinguish "never verified"
+    from "verified with a different wallet that was later swapped for this
+    one" in the rare case wallet_address was edited after the fact - it
+    just reports the first claim record this exact address appears on."""
+    client = _get_client()
+    if client is None:
+        return _unavailable("firestore_not_configured")
+
+    key = (wallet_address or "").strip().lower()
+    if not key:
+        return _unavailable("missing_wallet_address")
+
+    try:
+        from google.cloud.firestore_v1.base_query import FieldFilter
+
+        query = client.collection(COLLECTION).where(filter=FieldFilter("wallet_address", "==", key)).limit(1)
+        docs = list(query.stream())
+        if not docs:
+            return {"no_data": False, "claimed": False}
+        data = docs[0].to_dict() or {}
+        claimed_at = data.get("claimed_at")
+        return {
+            "no_data": False,
+            "claimed": True,
+            "nullifier": data.get("nullifier", ""),
+            "wallet_address": data.get("wallet_address", ""),
+            "scans_granted": data.get("scans_granted", TRIAL_SCANS_GRANTED),
+            "claimed_at": claimed_at.isoformat() if claimed_at else None,
+        }
+    except Exception as exc:
+        print(f"    [WORLD_ID] Failed to fetch claim status by wallet address: {exc}")
+        return _unavailable("fetch_failed")
