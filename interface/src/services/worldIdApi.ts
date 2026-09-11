@@ -21,6 +21,7 @@ export interface TrialStatusResult {
   reason?: string;
   scans_granted?: number;
   wallet_address?: string;
+  nullifier?: string;
   claimed_at?: string | null;
 }
 
@@ -78,12 +79,21 @@ export async function verifyWorldId(address: string, idkitResult: unknown): Prom
 /**
  * Check whether a previously-stored World ID nullifier already claimed
  * its trial, without claiming it - used to restore verified state across
- * sessions without re-running Selfie Check every time.
+ * sessions without re-running Selfie Check every time. If no nullifier is
+ * cached locally yet (e.g. this device never itself completed Selfie
+ * Check), pass a walletAddress instead - the backend falls back to a
+ * wallet-address lookup on the same claim record.
  */
-export async function getWorldIdStatus(nullifier: string): Promise<TrialStatusResult> {
+export async function getWorldIdStatus(nullifier?: string, walletAddress?: string): Promise<TrialStatusResult> {
   const base = requireApiBase();
   const url = new URL(`${base}/world-id/status`);
-  url.searchParams.set('nullifier', nullifier);
+  if (nullifier) {
+    url.searchParams.set('nullifier', nullifier);
+  } else if (walletAddress) {
+    url.searchParams.set('address', walletAddress);
+  } else {
+    throw new Error('getWorldIdStatus requires a nullifier or a walletAddress.');
+  }
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`World ID status lookup failed (HTTP ${response.status}).`);
