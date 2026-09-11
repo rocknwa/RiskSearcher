@@ -211,6 +211,26 @@ class WorldIdVerifyRequest(BaseModel):
     idkit_result: dict  # complete result IDKit's onSuccess/handleVerify received
 
 
+@app.post("/world-id/rp-signature")
+def world_id_rp_signature_endpoint(payload: dict = Body(...)):
+    """Server-signed rp_context for an IDKit request. World ID 4.0 requires
+    every request (Selfie Check included) to carry this. Signing lives here
+    in the Python backend (not a Vercel serverless function) because the
+    official @worldcoin/idkit-server package refuses to run outside real
+    Node.js - see rpc/world_id_provider.py's module docstring for the full
+    story and how this Python port was verified against it."""
+    action = payload.get("action", "verify-humanity")
+    signing_key = os.environ.get("WORLD_ID_RP_SIGNING_KEY", "").strip()
+    rp_id = os.environ.get("WORLD_ID_RP_ID", "").strip()
+    if not signing_key or not rp_id:
+        raise HTTPException(status_code=503, detail="World ID RP signing is not configured (WORLD_ID_RP_SIGNING_KEY / WORLD_ID_RP_ID).")
+    try:
+        signed = world_id_provider.generate_rp_signature(signing_key, action)
+    except world_id_provider.WorldIdError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    return {"rp_id": rp_id, **signed}
+
+
 @app.post("/world-id/verify")
 def world_id_verify_endpoint(payload: WorldIdVerifyRequest = Body(...)):
     """Verify a completed Selfie Check proof server-side - never trust the
