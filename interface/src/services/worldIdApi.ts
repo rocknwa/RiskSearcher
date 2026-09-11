@@ -34,14 +34,17 @@ function requireApiBase(): string {
 }
 
 /**
- * Server-signed rp_context for an IDKit request. Calls the Vercel
- * serverless function (interface/api/world-id-rp-signature.ts) that ships
- * alongside this frontend - same-origin, no CORS setup needed - rather
- * than the Python backend, since the RP signing_key lives in Vercel's env
- * vars specifically to keep it isolated from the Render-hosted backend.
+ * Server-signed rp_context for an IDKit request. Backed by
+ * rpc/world_id_provider.py's generate_rp_signature() - a Python port of
+ * @worldcoin/idkit-server, verified byte-for-byte against the real JS
+ * source. This intentionally does NOT call a Vercel serverless function:
+ * the official JS package explicitly refuses to run outside genuine
+ * Node.js (Edge Runtime included), which is what forced the move to a
+ * from-scratch, verified Python implementation in the first place.
  */
 export async function getRpSignature(action: string): Promise<RpSignature> {
-  const response = await fetch('/api/world-id-rp-signature', {
+  const base = requireApiBase();
+  const response = await fetch(`${base}/world-id/rp-signature`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action }),
