@@ -23,6 +23,7 @@ import { AnalysisApiResult, AnalysisStreamHandlers, TokenInvestigation, EVMNetwo
 import { streamContractAnalysis } from './services/riskSearcherApi';
 import { getArcWallet } from './services/arcApi';
 import { getScanHistory } from './services/historyApi';
+import { getWorldIdStatus } from './services/worldIdApi';
 
 // Reverse of the chainByNetwork map used when sending a scan request -
 // needed to turn a saved history record's plain chain string back into
@@ -125,6 +126,30 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isWalletConnected, userAccount.address]);
 
+  // The World ID nullifier (not the wallet address) is the real identity
+  // key for the trial - see db/world_id_store.py. Local storage here is
+  // purely a UX convenience so a returning user on the same browser isn't
+  // asked to redo Selfie Check every session; it is NOT the Sybil-defense
+  // mechanism itself (a cleared localStorage or new wallet still can't
+  // re-claim, since the backend checks the nullifier, not this cache).
+  useEffect(() => {
+    if (!isWalletConnected || !userAccount.address) return;
+    const storedNullifier = localStorage.getItem(`world_id_nullifier_${userAccount.address.toLowerCase()}`);
+    if (!storedNullifier) return;
+    getWorldIdStatus(storedNullifier)
+      .then((status) => {
+        if (status.no_data || !status.claimed) return;
+        setUserAccount((prev) => ({
+          ...prev,
+          isWorldIdVerified: true,
+          totalFreeScans: status.scans_granted ?? prev.totalFreeScans,
+          freeScansRemaining: status.scans_granted ?? prev.freeScansRemaining,
+        }));
+      })
+      .catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isWalletConnected, userAccount.address]);
+
   const triggerScanDirect = (address: string, network: EVMNetwork, handlers: AnalysisStreamHandlers) => {
     // A history entry is evidence from a prior run, not a cache hit. Always
     // request a fresh backend analysis so a reviewer can detect changed risk.
@@ -174,27 +199,44 @@ export default function App() {
     triggerScanDirect(address, network, handlers || { onProgress: () => undefined, onResult: () => undefined, onError: () => undefined });
   };
 
-  const handleVerifyWorldIdSuccess = () => {
+  const handleVerifyWorldIdSuccess = (scansGranted: number, nullifier: string) => {
     setUserAccount((prev) => ({
       ...prev,
       isWorldIdVerified: true,
-      totalFreeScans: 15,
-      freeScansRemaining: 15,
+      totalFreeScans: scansGranted,
+      freeScansRemaining: scansGranted,
     }));
+
+    // Purely a local UX cache so this browser doesn't re-prompt Selfie
+    // Check on reload - the actual one-human-one-trial enforcement lives
+    // server-side, keyed on this same nullifier (see db/world_id_store.py).
+    if (userAccount.address) {
+      localStorage.setItem(`world_id_nullifier_${userAccount.address.toLowerCase()}`, nullifier);
+    }
 
     const newTx: LedgerTransaction = {
       id: 'tx-' + Date.now(),
       timestamp: 'Just now',
-      operation: 'World ID zk-SNARK Verification',
+      operation: 'World ID Selfie Check Verification',
       category: 'service',
       typeIcon: 'fingerprint',
-      amount: '+15 Scans (Trial)',
+      amount: `+${scansGranted} Scans (Trial)`,
       isCredit: true,
       isFree: true,
-      txHash: '0x4299...a18f',
+      txHash: nullifier ? `${nullifier.slice(0, 6)}...${nullifier.slice(-4)}` : 'unavailable',
       settlement: 'Verified',
     };
     setTransactions([newTx, ...transactions]);
+  };
+
+  // A real, valid Selfie Check proof - but this human already claimed
+  // their trial with a different wallet. Not an error to hide; tell the
+  // person plainly rather than silently failing or granting a second trial.
+  const handleWorldIdAlreadyClaimed = (originalWalletAddress: string) => {
+    const shortAddress = originalWalletAddress
+      ? `${originalWalletAddress.slice(0, 6)}...${originalWalletAddress.slice(-4)}`
+      : 'a different wallet';
+    window.alert(`This World ID has already claimed a free trial with ${shortAddress}. Each verified human gets one trial, regardless of wallet.`);
   };
 
   const handleAddFundsSuccess = (amount: number, network: string, method: string) => {
@@ -567,6 +609,9 @@ export default function App() {
         isOpen={isWalletConnected && isWorldIdModalOpen}
         onClose={() => setIsWorldIdModalOpen(false)}
         onVerifySuccess={handleVerifyWorldIdSuccess}
+        onAlreadyClaimed={handleWorldIdAlreadyClaimed}
+        isAlreadyVerified={userAccount.isWorldIdVerified}
+        walletAddress={userAccount.address}
       />
 
       {/* Add Funds Modal (Receive & Buy USDC) */}
