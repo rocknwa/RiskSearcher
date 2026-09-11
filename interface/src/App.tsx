@@ -132,11 +132,18 @@ export default function App() {
   // asked to redo Selfie Check every session; it is NOT the Sybil-defense
   // mechanism itself (a cleared localStorage or new wallet still can't
   // re-claim, since the backend checks the nullifier, not this cache).
+  //
+  // A device/browser that never itself completed Selfie Check (e.g. this
+  // same wallet opened on desktop after verifying on mobile) has no
+  // locally-cached nullifier to check - falls back to a wallet-address
+  // lookup in that case, so "verified" status isn't stuck to one device.
   useEffect(() => {
     if (!isWalletConnected || !userAccount.address) return;
     const storedNullifier = localStorage.getItem(`world_id_nullifier_${userAccount.address.toLowerCase()}`);
-    if (!storedNullifier) return;
-    getWorldIdStatus(storedNullifier)
+    const lookup = storedNullifier
+      ? getWorldIdStatus(storedNullifier)
+      : getWorldIdStatus(undefined, userAccount.address);
+    lookup
       .then((status) => {
         if (status.no_data || !status.claimed) return;
         setUserAccount((prev) => ({
@@ -145,6 +152,11 @@ export default function App() {
           totalFreeScans: status.scans_granted ?? prev.totalFreeScans,
           freeScansRemaining: status.scans_granted ?? prev.freeScansRemaining,
         }));
+        // Backfill the local cache so this device also has the fast path
+        // (and a working nullifier value) from now on.
+        if (!storedNullifier && status.nullifier) {
+          localStorage.setItem(`world_id_nullifier_${userAccount.address.toLowerCase()}`, status.nullifier);
+        }
       })
       .catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
