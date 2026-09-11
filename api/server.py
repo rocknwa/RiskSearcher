@@ -28,8 +28,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from core.analyzer import analyze
-from db import scan_history_store
-from rpc import arc_provider
+from db import scan_history_store, world_id_store
+from rpc import arc_provider, world_id_provider
 
 app = FastAPI(title="RiskSearcher API")
 
@@ -204,6 +204,43 @@ def arc_subscribe_endpoint(payload: SubscribeRequest = Body(...)):
     if wallet.get("no_data"):
         raise HTTPException(status_code=400, detail=f"Arc wallet unavailable: {wallet.get('reason')}")
     return arc_provider.send_usdc(wallet["wallet_id"], treasury_address, payload.plan_price)
+
+
+class WorldIdVerifyRequest(BaseModel):
+    address: str  # connected wallet address, linked to the grant for reference only
+    idkit_result: dict  # complete result IDKit's onSuccess/handleVerify received
+
+
+@app.post("/world-id/verify")
+def world_id_verify_endpoint(payload: WorldIdVerifyRequest = Body(...)):
+    """Verify a completed Selfie Check proof server-side - never trust the
+    client's own "success" state - and, on a first-time verification for
+    this human, atomically grant the one-time free trial. A human who
+    already claimed a trial with a different wallet gets a clear
+    already_claimed response instead of a second grant. This is the real
+    Sybil-defense check; everything upstream of this call is just UI."""
+    rp_id = os.environ.get("WORLD_ID_RP_ID", "").strip()
+    if not rp_id:
+        raise HTTPException(status_code=500, detail="WORLD_ID_RP_ID is not configured on the server")
+
+    try:
+        result = world_id_provider.verify_proof(rp_id, payload.idkit_result)
+    except world_id_provider.WorldIdError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    claim = world_id_store.claim_trial(result["nullifier"], payload.address)
+    if claim.get("no_data"):
+        raise HTTPException(status_code=503, detail=f"Trial ledger unavailable: {claim.get('reason')}")
+    return {**claim, "nullifier": result["nullifier"]}
+
+
+@app.get("/world-id/status")
+def world_id_status_endpoint(nullifier: str = Query(..., description="World ID nullifier for this human")):
+    """Check whether this human (by nullifier) already claimed their
+    trial, without claiming it. Called on app load with a nullifier the
+    frontend stored locally after a successful verify, so returning users
+    don't need to redo Selfie Check every session."""
+    return world_id_store.get_claim_status(nullifier)
 
 
 @app.get("/debug/setup-entity-secret")
