@@ -7,21 +7,26 @@
 // backend's repo - keeping the sign step in a Vercel function scoped to
 // this same project keeps it isolated with its own env var.
 //
-// NOTE: this previously imported `signRequest` from `@worldcoin/idkit-server`,
-// which is not a real published package under the @worldcoin npm scope.
-// That bad import made this function fail to run correctly, so every call
-// hung until Vercel killed it (504 / FUNCTION_INVOCATION_TIMEOUT) - which
-// also meant the IDKit widget on the client never opened and never asked
-// for camera access. The real subpath export for this, per World's own
-// integration docs (docs.world.org/world-id/idkit/integrate), lives in
-// `@worldcoin/idkit-core/signing` - a package already listed in
-// package.json. Signing is standard Ethereum EIP-191 message signing over
-// secp256k1 - not the BabyJubJub/Poseidon2 zk-native scheme used elsewhere
-// in the World ID protocol stack - which is why it can run in pure JS with
-// no WASM, in an ordinary serverless function.
-import { signRequest } from '@worldcoin/idkit-core/signing';
+// The signing algorithm itself is standard Ethereum EIP-191 message
+// signing over secp256k1 (per @worldcoin/idkit-server's own source
+// comments) - not the BabyJubJub/Poseidon2 zk-native scheme used
+// elsewhere in the World ID protocol stack. This is why the official
+// @worldcoin/idkit-server package can implement it in pure JS with no
+// WASM, and why this can live in an ordinary serverless function.
+import { signRequest } from '@worldcoin/idkit-server';
 
-export const config = { runtime: 'nodejs' };
+// Edge runtime, not Node.js: this handler already uses the Web-standard
+// Request/Response signature, which is what Edge Functions expect for a
+// plain /api directory (non-Next.js) Vercel project. Declaring
+// runtime: 'nodejs' here while keeping this signature was the actual bug -
+// Node.js's runtime for this convention expects the older Express-style
+// (req: VercelRequest, res: VercelResponse) => void shape from
+// @vercel/node instead, so the response never made it back to the client
+// and the function just hung until Vercel's own 5-minute platform timeout
+// killed it (FUNCTION_INVOCATION_TIMEOUT). idkit-server's dependencies
+// (@noble/hashes, @noble/secp256k1) are pure JS with no Node-specific
+// APIs, so Edge is a safe, correct fit here.
+export const config = { runtime: 'edge' };
 
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') {
@@ -63,4 +68,4 @@ export default async function handler(req: Request): Promise<Response> {
       { status: 500 },
     );
   }
-}
+        }
