@@ -21,13 +21,13 @@ export const SupportedChainsView: React.FC<SupportedChainsViewProps> = ({
       <div className="text-center max-w-3xl mx-auto space-y-3">
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#171f33] border border-[#222a3d] text-xs font-mono text-[#4cd7f6]">
           <span className="w-2 h-2 rounded-full bg-[#4edea3] animate-pulse"></span>
-          <span>7 HIGH-THROUGHPUT EVM ARCHIVE CLUSTERS</span>
+          <span>7 SUPPORTED EVM NETWORKS</span>
         </div>
         <h1 className="text-3xl sm:text-4xl font-bold text-[#dae2fd] tracking-tight">
-          Supported Chains &amp; RPC Telemetry
+          Supported Chains
         </h1>
         <p className="text-base text-[#c2c6d6] leading-relaxed">
-          RiskSearcher provisions dedicated archival trace nodes across every supported network, allowing sub-second dry-run fork simulations without querying rate-limited public endpoints.
+          RiskSearcher can fetch source/bytecode and transaction evidence across these EVM networks using its configured providers. The Graph evidence is added where the current analyzer supports it.
         </p>
       </div>
 
@@ -54,33 +54,33 @@ export const SupportedChainsView: React.FC<SupportedChainsViewProps> = ({
                 </div>
               </div>
               <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-[#00a572]/20 text-[#4edea3] font-bold">
-                {chain.archiveNodes}
+                SUPPORTED
               </span>
             </div>
 
             <div className="grid grid-cols-3 gap-2 bg-[#060e20] p-3 rounded-lg border border-[#222a3d] font-mono text-xs">
               <div>
-                <span className="text-[10px] text-[#8c909f] block">LATENCY</span>
-                <span className="text-[#4cd7f6] font-bold">{chain.rpcLatency}</span>
+                <span className="text-[10px] text-[#8c909f] block">SOURCE</span>
+                <span className="text-[#4cd7f6] font-bold">Explorer/API</span>
               </div>
               <div>
-                <span className="text-[10px] text-[#8c909f] block">GAS TARGET</span>
-                <span className="text-[#dae2fd] font-bold">{chain.gasTarget}</span>
+                <span className="text-[10px] text-[#8c909f] block">BYTECODE</span>
+                <span className="text-[#dae2fd] font-bold">RPC</span>
               </div>
               <div>
-                <span className="text-[10px] text-[#8c909f] block">BLOCK TIME</span>
-                <span className="text-[#4edea3] font-bold">{chain.blockTime}</span>
+                <span className="text-[10px] text-[#8c909f] block">ANALYSIS</span>
+                <span className="text-[#4edea3] font-bold">Enabled</span>
               </div>
             </div>
 
             <div className="space-y-1.5 text-xs text-[#c2c6d6]">
               <div className="flex items-center justify-between font-mono">
-                <span className="text-[#8c909f]">Simulation Engine:</span>
-                <span className="text-[#dae2fd]">Anvil Trace v4.19</span>
+                <span className="text-[#8c909f]">Analysis Engine:</span>
+                <span className="text-[#dae2fd]">Rules + Bytecode Fallback</span>
               </div>
               <div className="flex items-center justify-between font-mono">
-                <span className="text-[#8c909f]">DEX Routers Synced:</span>
-                <span className="text-[#dae2fd]">Uniswap, Sushi, Aerodrome, Camelot</span>
+                <span className="text-[#8c909f]">Transaction Evidence:</span>
+                <span className="text-[#dae2fd]">RPC / The Graph where available</span>
               </div>
             </div>
 
@@ -88,7 +88,7 @@ export const SupportedChainsView: React.FC<SupportedChainsViewProps> = ({
               onClick={() => {
                 if (!isWalletConnected) {
                   onOpenWalletModal?.(
-                    `Authentication Required: Connect your Web3 wallet or sign in to launch deep simulations and scans on ${chain.name}.`
+                    `Sign in with your passkey to run contract analysis on ${chain.name}.`
                   );
                   return;
                 }

@@ -1,17 +1,12 @@
 import { ScanHistoryResponse } from '../types';
+import { authFetch } from './authApi';
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim().replace(/\/$/, '');
 
-/** This user's past scans from Firestore, most recent first. */
-export async function getScanHistory(address: string): Promise<ScanHistoryResponse> {
-  if (!apiBaseUrl) {
-    throw new Error('The analysis service is not configured. Set VITE_API_BASE_URL and reload the app.');
-  }
-  const url = new URL(`${apiBaseUrl}/history`);
-  url.searchParams.set('address', address);
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Scan history lookup failed (HTTP ${response.status}).`);
-  }
-  return response.json();
+export async function getScanHistory(): Promise<ScanHistoryResponse> {
+  if (!apiBaseUrl) throw new Error('The analysis service is not configured. Set VITE_API_BASE_URL and reload.');
+  const response = await authFetch(`${apiBaseUrl}/history`);
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body?.detail || `Scan history lookup failed (HTTP ${response.status}).`);
+  return body;
 }

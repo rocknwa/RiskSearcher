@@ -44,7 +44,7 @@ class WorldIdStoreTests(unittest.TestCase):
         doc.to_dict.return_value = {
             "nullifier": "real-nullifier-abc",
             "wallet_address": "0xuser",
-            "scans_granted": 15,
+            "scans_granted": 3,
             "claimed_at": None,
         }
         mock_query = MagicMock()
@@ -57,7 +57,7 @@ class WorldIdStoreTests(unittest.TestCase):
         self.assertFalse(result["no_data"])
         self.assertTrue(result["claimed"])
         self.assertEqual(result["nullifier"], "real-nullifier-abc")
-        self.assertEqual(result["scans_granted"], 15)
+        self.assertEqual(result["scans_granted"], 3)
 
     @patch.dict(os.environ, {"FIRESTORE_CREDENTIALS_JSON": "{}"}, clear=False)
     @patch("db.world_id_store._get_client")

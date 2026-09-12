@@ -16,7 +16,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 }) => {
   const [selectedNetwork, setSelectedNetwork] = useState<EVMNetwork>('Ethereum');
   const [contractAddress, setContractAddress] = useState('0x6B175474E89094C44Da98b954EedeAC495271d0F');
-  const [isSimulating, setIsSimulating] = useState(false);
   const [showNetworkDropdown, setShowNetworkDropdown] = useState(false);
 
   const networks: EVMNetwork[] = [
@@ -38,11 +37,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       return;
     }
 
-    setIsSimulating(true);
-    setTimeout(() => {
-      setIsSimulating(false);
-      onStartScan(contractAddress, selectedNetwork);
-    }, 900);
+    onStartScan(contractAddress.trim(), selectedNetwork);
   };
 
   const handleQuickFeedClick = (address: string, network: EVMNetwork) => {
@@ -56,20 +51,20 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         <div className="max-w-[88rem] mx-auto flex flex-wrap items-center justify-between gap-2 text-[#c2c6d6]">
           <div className="flex items-center gap-2 text-xs">
             <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-[#00a572]/20 text-[#4edea3] font-mono font-bold text-[10px] uppercase tracking-wider">
-              Live Stream
+              Analysis Stack
             </span>
-            <span className="font-mono text-[#dae2fd]">Mempool Threat Monitor: Active on 7 Chains</span>
+            <span className="font-mono text-[#dae2fd]">Contract analysis available on 7 EVM networks</span>
             <span className="text-[#424754]">•</span>
             <span className="font-mono hidden md:inline text-[#8c909f]">
-              Block execution simulation engine v4.19 active
+              Deterministic rules + specialist/judge reasoning
             </span>
           </div>
           <div className="flex items-center gap-4 font-mono text-xs">
             <span className="text-[#4cd7f6] flex items-center gap-1">
-              <span className="material-symbols-outlined text-[14px]">bolt</span>
-              <span>120ms RPC Latency</span>
+              <span className="material-symbols-outlined text-[14px]">payments</span>
+              <span>Arc Testnet access</span>
             </span>
-            <span className="text-[#8c909f]">Gas Target: 14 Gwei</span>
+            <span className="text-[#8c909f]">World ID trial</span>
           </div>
         </div>
       </div>
@@ -222,15 +217,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 <button
                   id="landing-analyze-btn"
                   type="submit"
-                  disabled={isSimulating}
                   className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-lg bg-[#4d8eff] text-[#00285d] font-semibold text-sm hover:bg-[#adc6ff] hover:text-[#002e6a] transition-all shadow-lg active:scale-[0.99] shrink-0"
                 >
-                  {isSimulating ? (
-                    <>
-                      <span className="material-symbols-outlined animate-spin text-[20px]">sync</span>
-                      <span>Simulating Opcode Trace...</span>
-                    </>
-                  ) : !isWalletConnected ? (
+                  {!isWalletConnected ? (
                     <>
                       <span className="material-symbols-outlined text-[19px]">lock</span>
                       <span>Connect &amp; Analyze</span>
@@ -248,7 +237,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               <div className="mt-3 pt-2.5 border-t border-[#222a3d]/60 flex flex-wrap items-center justify-between gap-3 text-[#c2c6d6]">
                 <div className="flex items-center gap-1.5 font-mono text-xs text-[#8c909f]">
                   <span className="text-[#4edea3] material-symbols-outlined text-[16px]">verified</span>
-                  <span>Direct mempool dry-run with Hardhat/Anvil fork nodes</span>
+                  <span>Verified-source analysis with bytecode fallback and transaction evidence</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
@@ -285,18 +274,18 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             {/* Trust Indicators Strip */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 w-full mt-10 text-left">
               <div className="bg-[#131b2e] p-4 rounded-xl border border-[#222a3d]">
-                <span className="font-mono text-xs text-[#8c909f] uppercase block">Scam Tokens Flagged</span>
-                <span className="text-2xl font-bold text-[#dae2fd] tracking-tight mt-1 block">14,820+</span>
+                <span className="font-mono text-xs text-[#8c909f] uppercase block">Verified Human Trial</span>
+                <span className="text-2xl font-bold text-[#dae2fd] tracking-tight mt-1 block">3 Scans</span>
                 <span className="text-xs text-[#4edea3] flex items-center gap-1 mt-1">
                   <span className="material-symbols-outlined text-[14px]">trending_up</span>
-                  <span>+382 caught past 24h</span>
+                  <span>One-time World ID allocation</span>
                 </span>
               </div>
 
               <div className="bg-[#131b2e] p-4 rounded-xl border border-[#222a3d]">
-                <span className="font-mono text-xs text-[#8c909f] uppercase block">Honeypot Precision</span>
-                <span className="text-2xl font-bold text-[#4cd7f6] tracking-tight mt-1 block">0.00%</span>
-                <span className="text-xs text-[#c2c6d6] mt-1 block">Zero recorded false-positives</span>
+                <span className="font-mono text-xs text-[#8c909f] uppercase block">Testnet Scan Pack</span>
+                <span className="text-2xl font-bold text-[#4cd7f6] tracking-tight mt-1 block">10 Scans</span>
+                <span className="text-xs text-[#c2c6d6] mt-1 block">$5 Arc Testnet USDC</span>
               </div>
 
               <div className="bg-[#131b2e] p-4 rounded-xl border border-[#222a3d]">
@@ -306,16 +295,16 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               </div>
 
               <div className="bg-[#131b2e] p-4 rounded-xl border border-[#222a3d]">
-                <span className="font-mono text-xs text-[#8c909f] uppercase block">Triage Speed</span>
-                <span className="text-2xl font-bold text-[#4edea3] tracking-tight mt-1 block">&lt; 1.4s</span>
-                <span className="text-xs text-[#c2c6d6] mt-1 block">Dual-engine simulated verdict</span>
+                <span className="font-mono text-xs text-[#8c909f] uppercase block">Analysis Pipeline</span>
+                <span className="text-2xl font-bold text-[#4edea3] tracking-tight mt-1 block">5 Stages</span>
+                <span className="text-xs text-[#c2c6d6] mt-1 block">Source • rules • evidence • specialist • judge</span>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Live Simulated Diagnostic Drawer / Teaser Result */}
+      {/* Illustrative report format */}
       <section className="w-full bg-[#060e20] py-8 border-y border-[#222a3d]/70">
         <div className="max-w-[88rem] mx-auto px-4 lg:px-6">
           <div className="bg-[#222a3d]/80 border border-[#2d3449] rounded-xl p-5 lg:p-6 shadow-xl">
@@ -327,10 +316,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-semibold text-base text-[#dae2fd]">
-                      Uniswap V2 Router02 Diagnostic Trace
+                      Example Contract Risk Report
                     </span>
                     <span className="inline-flex items-center px-2 py-0.5 rounded bg-[#00a572]/20 text-[#4edea3] font-mono text-[10px] font-bold shrink-0">
-                      SAFE VERDICT
+                      EXAMPLE VERDICT
                     </span>
                   </div>
                   <span className="font-mono text-xs text-[#8c909f] break-all block mt-0.5">
@@ -341,8 +330,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
               <div className="flex items-center gap-4 shrink-0">
                 <div className="text-right">
-                  <span className="font-mono text-[11px] text-[#8c909f] block">COMPOSITE RISK INDEX</span>
-                  <span className="text-xl font-bold text-[#4edea3]">02 / 100</span>
+                  <span className="font-mono text-[11px] text-[#8c909f] block">RISK SCORE</span>
+                  <span className="text-xl font-bold text-[#4edea3]">0–100</span>
                 </div>
                 <div className="w-12 h-12 rounded-full bg-[#060e20] flex items-center justify-center text-[#4edea3] font-mono font-bold">
                   <svg className="w-10 h-10 -rotate-90" viewBox="0 0 36 36">
@@ -367,35 +356,35 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               </div>
             </div>
 
-            {/* Telemetry Data Breakdown */}
+            {/* Report evidence overview */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-4">
               <div className="bg-[#060e20] p-3.5 rounded-lg border border-[#222a3d] flex flex-col justify-between">
                 <div className="flex items-center justify-between">
-                  <span className="font-mono text-xs text-[#8c909f]">SELL TAX SIMULATION</span>
-                  <span className="text-[#4edea3] font-mono text-[10px] uppercase font-bold">0.00% Verified</span>
+                  <span className="font-mono text-xs text-[#8c909f]">SOURCE / BYTECODE</span>
+                  <span className="text-[#4edea3] font-mono text-[10px] uppercase font-bold">Inspection</span>
                 </div>
                 <p className="text-xs text-[#c2c6d6] mt-2 leading-relaxed">
-                  Gas consumed: 21,490 units. No dynamic fee modifier detected in fallback dispatch.
+                  Verified source is inspected when available; deployed bytecode/opcodes provide fallback evidence when it is not.
                 </p>
               </div>
 
               <div className="bg-[#060e20] p-3.5 rounded-lg border border-[#222a3d] flex flex-col justify-between">
                 <div className="flex items-center justify-between">
-                  <span className="font-mono text-xs text-[#8c909f]">LIQUIDITY PERMIT</span>
-                  <span className="text-[#4edea3] font-mono text-[10px] uppercase font-bold">Immutable Lock</span>
+                  <span className="font-mono text-xs text-[#8c909f]">TRANSACTION EVIDENCE</span>
+                  <span className="text-[#4edea3] font-mono text-[10px] uppercase font-bold">History Review</span>
                 </div>
                 <p className="text-xs text-[#c2c6d6] mt-2 leading-relaxed">
-                  No unverified proxy delegatecalls. Liquidity pair ownership held by dead address.
+                  Historical transaction patterns and The Graph liquidity evidence are incorporated where the configured data sources support them.
                 </p>
               </div>
 
               <div className="bg-[#060e20] p-3.5 rounded-lg border border-[#222a3d] flex flex-col justify-between">
                 <div className="flex items-center justify-between">
-                  <span className="font-mono text-xs text-[#8c909f]">LLM JURY CONSENSUS</span>
-                  <span className="text-[#4cd7f6] font-mono text-[10px] uppercase font-bold">3 / 3 Agreement</span>
+                  <span className="font-mono text-xs text-[#8c909f]">SPECIALIST + JUDGE</span>
+                  <span className="text-[#4cd7f6] font-mono text-[10px] uppercase font-bold">Reconciled</span>
                 </div>
                 <p className="text-xs text-[#c2c6d6] mt-2 leading-relaxed">
-                  Decompiler Agent & Trap Hunter confirm standard router dispatch routines without backdoors.
+                  The token-risk specialist evaluates semantic risk patterns and the judge reconciles those findings with the deterministic rules score.
                 </p>
               </div>
             </div>
@@ -411,10 +400,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               Forensic Protocol Pipeline
             </span>
             <h2 className="text-2xl sm:text-3xl font-bold text-[#dae2fd] mt-1 tracking-tight">
-              Multi-Layer Threat Evaluation in 1.4 Seconds
+              Multi-Layer Threat Evaluation
             </h2>
             <p className="text-sm sm:text-base text-[#c2c6d6] mt-2 leading-relaxed">
-              Deterministic execution physics paired with decentralized AI judges. Every token analysis goes through automated zero-trust execution.
+              Deterministic rules, source/bytecode evidence, transaction history, and specialist/judge reasoning are combined into an evidence-backed verdict.
             </p>
           </div>
 
@@ -427,7 +416,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 <span className="font-mono text-base text-[#adc6ff] font-bold">01 / DISCOVERY</span>
                 <h3 className="text-lg font-bold text-[#dae2fd] mt-1.5">Paste Token Address</h3>
                 <p className="text-sm text-[#c2c6d6] mt-2.5 leading-relaxed">
-                  Submit any ERC-20 contract or DEX pool address across Ethereum, Base, Arbitrum, Optimism, Polygon, BNB Chain, or Avalanche. Instant bytecode and source extraction via high-throughput archive nodes.
+                  Submit any ERC-20 contract or DEX pool address across Ethereum, Base, Arbitrum, Optimism, Polygon, BNB Chain, or Avalanche. RiskSearcher fetches verified source when available and deployed bytecode through the configured chain providers.
                 </p>
               </div>
               <div className="mt-6 pt-3 bg-[#060e20] p-3 rounded-lg border border-[#222a3d]">
@@ -445,24 +434,24 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             <div className="bg-[#131b2e] p-6 rounded-xl border border-[#222a3d] flex flex-col justify-between relative overflow-hidden group hover:border-[#4cd7f6]/40 transition-colors">
               <div className="absolute -right-4 -bottom-4 w-32 h-32 bg-[#4cd7f6]/5 rounded-full blur-2xl group-hover:bg-[#4cd7f6]/10 transition-colors"></div>
               <div>
-                <span className="font-mono text-base text-[#4cd7f6] font-bold">02 / FORENSIC SANDBOX</span>
+                <span className="font-mono text-base text-[#4cd7f6] font-bold">02 / FORENSIC ANALYSIS</span>
                 <h3 className="text-lg font-bold text-[#dae2fd] mt-1.5">Dual-Layer Inspection</h3>
                 <p className="text-sm text-[#c2c6d6] mt-2.5 leading-relaxed">
-                  Deterministic rules engine simulates actual simulated buy/sell actions on local mempool forks, while a specialist multi-LLM tribunal audits decompiled opcode semantics for unverified hidden backdoors.
+                  A deterministic rules engine inspects verified source or bytecode, while an LLM specialist reviews rug and honeypot patterns and a judge reconciles those findings with transaction evidence for the final verdict.
                 </p>
               </div>
               <div className="mt-6 space-y-1.5 bg-[#060e20] p-3 rounded-lg border border-[#222a3d] font-mono text-xs">
                 <div className="flex items-center justify-between text-[#c2c6d6]">
-                  <span>Fork Simulation</span>
-                  <span className="text-[#4edea3] font-semibold">PASSED</span>
+                  <span>Rule Engine</span>
+                  <span className="text-[#4edea3] font-semibold">COMPLETE</span>
                 </div>
                 <div className="flex items-center justify-between text-[#c2c6d6]">
-                  <span>Decompiler Reviewer</span>
+                  <span>Specialist Review</span>
                   <span className="text-[#4cd7f6] font-semibold">SYNTHESIZED</span>
                 </div>
                 <div className="flex items-center justify-between text-[#c2c6d6]">
-                  <span>Prompt Trap Defense</span>
-                  <span className="text-[#4edea3] font-semibold">CLEAN</span>
+                  <span>Judge Reconciliation</span>
+                  <span className="text-[#4edea3] font-semibold">COMPLETE</span>
                 </div>
               </div>
             </div>
@@ -482,7 +471,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                   <span className="material-symbols-outlined text-[#4edea3] text-[24px]">verified</span>
                   <div>
                     <span className="font-mono text-xs text-[#dae2fd] font-semibold block">VERDICT: APPROVED</span>
-                    <span className="font-mono text-[11px] text-[#8c909f]">Simulation gas: verified</span>
+                    <span className="font-mono text-[11px] text-[#8c909f]">Rules + specialist/judge reasoning</span>
                   </div>
                 </div>
                 <span className="px-2 py-1 bg-[#00a572]/20 text-[#4edea3] font-mono text-[10px] font-bold rounded uppercase">
@@ -499,9 +488,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         <div className="max-w-[88rem] mx-auto px-4 lg:px-6 mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-[#4cd7f6] animate-pulse"></span>
-            <h3 className="font-semibold text-base sm:text-lg text-[#dae2fd]">Recent Scans Live Feed</h3>
+            <h3 className="font-semibold text-base sm:text-lg text-[#dae2fd]">Example Risk Findings</h3>
           </div>
-          <span className="font-mono text-xs text-[#8c909f]">Real-time threat feed across all decentralized protocols</span>
+          <span className="font-mono text-xs text-[#8c909f]">Illustrative findings from RiskSearcher analysis patterns</span>
         </div>
 
         <div className="max-w-[88rem] mx-auto px-4 lg:px-6">
@@ -658,24 +647,24 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 <h3 className="text-lg font-bold text-[#dae2fd]">RiskSearcher Pre-Flight Protection</h3>
               </div>
               <p className="text-sm text-[#c2c6d6] mb-6 leading-relaxed">
-                Real-time, deterministic adversarial simulations run at the microsecond of your query. Built strictly for the trader's solvency.
+                On-demand analysis combines deterministic source and bytecode checks, transaction-history evidence, and specialist/judge reasoning into one risk report.
               </p>
               <ul className="space-y-3.5 text-sm text-[#dae2fd]">
                 <li className="flex items-start gap-2.5">
                   <span className="material-symbols-outlined text-[#4edea3] text-[20px] shrink-0 mt-0.5">check_circle</span>
-                  <span><strong className="text-[#dae2fd]">Mempool Buy &amp; Sell Simulation:</strong> Executes a simulated dual-trade sequence on an ephemeral test fork to ensure unencumbered exits.</span>
+                  <span><strong className="text-[#dae2fd]">Source + Bytecode Inspection:</strong> Checks verified source when available and falls back to deployed bytecode/opcode signals when it is not.</span>
                 </li>
                 <li className="flex items-start gap-2.5">
                   <span className="material-symbols-outlined text-[#4edea3] text-[20px] shrink-0 mt-0.5">check_circle</span>
-                  <span><strong className="text-[#dae2fd]">Dynamic Fee Traps:</strong> Decompiles hidden tax schedules and trigger functions designed to hike sell tax to 99% upon launch.</span>
+                  <span><strong className="text-[#dae2fd]">Privilege &amp; Trading-Control Checks:</strong> Flags mint authority, trading toggles, ownership controls, balance gating, and sell-blocking patterns.</span>
                 </li>
                 <li className="flex items-start gap-2.5">
                   <span className="material-symbols-outlined text-[#4edea3] text-[20px] shrink-0 mt-0.5">check_circle</span>
-                  <span><strong className="text-[#dae2fd]">Ownership Truancy Checks:</strong> Validates zero-address ownership claims against underlying diamond and upgradeable proxy storage slots.</span>
+                  <span><strong className="text-[#dae2fd]">Ownership &amp; Upgradeability Signals:</strong> Surfaces owner/admin and upgradeability indicators from the contract evidence available to the analyzer.</span>
                 </li>
                 <li className="flex items-start gap-2.5">
                   <span className="material-symbols-outlined text-[#4edea3] text-[20px] shrink-0 mt-0.5">check_circle</span>
-                  <span><strong className="text-[#dae2fd]">Specialist Multi-LLM Panel:</strong> Consensus layer analyzes variable nomenclature, hidden burn routines, and obscure opcode patterns.</span>
+                  <span><strong className="text-[#dae2fd]">Specialist + Judge Reasoning:</strong> A token-risk specialist evaluates semantic risk patterns and a judge reconciles those findings with deterministic rules.</span>
                 </li>
               </ul>
             </div>
@@ -692,23 +681,23 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 Deterministic Rules + Consensus
               </span>
               <h2 className="text-2xl sm:text-3xl font-bold text-[#dae2fd] mt-1.5 tracking-tight">
-                Decompiled Bytecode Inspection in Real Time
+                Bytecode Inspection When Source Is Unverified
               </h2>
               <p className="text-sm text-[#c2c6d6] mt-4 leading-relaxed">
-                Unverified contracts are decompiled on-the-fly. Even when Solidity source code is hidden on block explorers, our reverse-engineering engine reconstructs dispatch trees, liquidity routing mechanisms, and variable balance limits.
+                When Solidity source is unavailable, RiskSearcher falls back to runtime bytecode and opcode inspection so deterministic risk signals can still contribute to the verdict. Historical transaction evidence is added where available.
               </p>
               <div className="mt-6 flex flex-col gap-2.5">
                 <div className="flex items-center gap-2 text-[#dae2fd] font-mono text-xs">
                   <span className="w-2 h-2 rounded-full bg-[#adc6ff]"></span>
-                  <span>EVM Opcode disassembler (EVMcfg)</span>
+                  <span>Runtime bytecode / opcode scanning</span>
                 </div>
                 <div className="flex items-center gap-2 text-[#dae2fd] font-mono text-xs">
                   <span className="w-2 h-2 rounded-full bg-[#4cd7f6]"></span>
-                  <span>Hardhat/Anvil transaction tracer</span>
+                  <span>Historical transaction-pattern analysis</span>
                 </div>
                 <div className="flex items-center gap-2 text-[#dae2fd] font-mono text-xs">
                   <span className="w-2 h-2 rounded-full bg-[#4edea3]"></span>
-                  <span>Multi-specialist AI consensus engine</span>
+                  <span>LLM specialist + judge reconciliation</span>
                 </div>
               </div>
             </div>

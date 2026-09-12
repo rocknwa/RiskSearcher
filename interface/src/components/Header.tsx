@@ -90,7 +90,7 @@ export const Header: React.FC<HeaderProps> = ({
             </span>
             <span className="text-[#424754] font-mono text-[11px]">•</span>
             <span className="font-mono text-[11px] text-[#c2c6d6]">
-              Multi-LLM Judge: <span className="text-[#4cd7f6] font-medium">Active</span>
+              Specialist + Judge: <span className="text-[#4cd7f6] font-medium">Active</span>
             </span>
           </div>
         </div>
@@ -167,7 +167,7 @@ export const Header: React.FC<HeaderProps> = ({
                     className="w-full text-left px-3 py-2 hover:bg-[#222a3d] text-[#dae2fd] rounded flex items-center gap-2 transition-colors"
                   >
                     <span className="material-symbols-outlined text-[16px] text-[#4cd7f6]">account_balance_wallet</span>
-                    <span>Wallet &amp; Subscriptions</span>
+                    <span>Wallet &amp; Scan Credits</span>
                   </button>
                   <button
                     onClick={() => {

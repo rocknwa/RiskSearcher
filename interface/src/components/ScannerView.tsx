@@ -41,11 +41,12 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
   const [scanCurrentStage, setScanCurrentStage] = useState(1);
   const [scanProgressMessage, setScanProgressMessage] = useState('[1/5] Fetching contract source...');
   const [scanError, setScanError] = useState<string | null>(null);
-  const [isReSimulating, setIsReSimulating] = useState(false);
+  const [accessPromptOpen, setAccessPromptOpen] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedAudit, setCopiedAudit] = useState(false);
   const [copiedAddress, setCopiedAddress] = useState(false);
   const streamEndRef = useRef<HTMLDivElement>(null);
+  const analysisTopRef = useRef<HTMLElement>(null);
   const handledAutoScanIdRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -69,25 +70,22 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
       item.address.toLowerCase().includes(filterQuery.toLowerCase())
   );
 
-  const startScan = (address: string, network: EVMNetwork, skipScannerGates = false) => {
+  const startScan = (address: string, network: EVMNetwork) => {
     if (!address.trim() || isScanning) return;
-    const isCompletedHistoryTarget = investigations.some(
-      (item) => item.address.toLowerCase() === address.trim().toLowerCase() && item.network === network && !item.isAnalyzing,
-    );
-    // Previous results, including seeded/mock history, are never terminal:
-    // reanalysis always fetches current evidence once the previous run ended.
-    if (!skipScannerGates && !isCompletedHistoryTarget && !userAccount.isWorldIdVerified) {
-      onOpenWorldIdModal();
+
+    // UX gate mirrors the backend's authoritative credit reservation. Every
+    // fresh run and re-analysis costs one scan; history/benchmark rows never bypass it.
+    const availableScans = userAccount.freeScansRemaining + userAccount.paidScansRemaining;
+    if (availableScans <= 0) {
+      setAccessPromptOpen(true);
       return;
     }
-    if (!skipScannerGates && !isCompletedHistoryTarget && userAccount.freeScansRemaining <= 0 && !userAccount.activeSubscription && userAccount.riskSearcherBalance <= 0) {
-      onOpenSubscriptionModal();
-      return;
-    }
+
     setIsScanning(true);
     setScanCurrentStage(1);
     setScanProgressMessage('[1/5] Fetching contract source...');
     setScanError(null);
+    requestAnimationFrame(() => analysisTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
     onRunScan(address.trim(), network, {
       onProgress: ({ message }) => {
         setScanProgressMessage(message);
@@ -98,6 +96,9 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
       onError: (message) => {
         setIsScanning(false);
         setScanError(message);
+        if (/scan credit|required|verify humanity|buy 10 scans/i.test(message)) {
+          setAccessPromptOpen(true);
+        }
       },
     });
   };
@@ -113,7 +114,7 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
     setInputAddress(autoScanRequest.address);
     setSelectedNetwork(autoScanRequest.network);
     onAutoScanRequestHandled?.();
-    startScan(autoScanRequest.address, autoScanRequest.network, true);
+    startScan(autoScanRequest.address, autoScanRequest.network);
   }, [autoScanRequest, onAutoScanRequestHandled]);
 
   const handleSelectDemoToken = (id: string) => {
@@ -121,13 +122,6 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
     if (found) {
       onSelectToken(found);
     }
-  };
-
-  const handleReRunSimulation = () => {
-    setIsReSimulating(true);
-    setTimeout(() => {
-      setIsReSimulating(false);
-    }, 1200);
   };
 
   const handleShareLink = () => {
@@ -160,7 +154,7 @@ Transaction Behavior:
 - Unique senders: ${activeToken.transactionBehavior?.uniqueSenders ?? 'N/A'}
 - Outbound concentration: ${activeToken.transactionBehavior?.outboundConcentration ?? 'N/A'}
 
-Generated via RiskSearcher Multi-Judge SEC-KERNEL`;
+Generated via RiskSearcher rules + specialist/judge pipeline`;
 
     navigator.clipboard.writeText(reportText);
     setCopiedAudit(true);
@@ -208,7 +202,7 @@ Generated via RiskSearcher Multi-Judge SEC-KERNEL`;
 
           {/* Subtitle */}
           <p className="mt-3 text-sm sm:text-base text-[#c2c6d6] max-w-xl leading-relaxed">
-            Real-time smart contract decompilation, opcode trace execution, mempool threat telemetry, and multi-judge AI consensus require an active session. Please sign in or connect your wallet to access the dashboard.
+            Live smart-contract source/bytecode analysis, transaction evidence, deterministic rules, and specialist + judge reasoning require an authenticated session.
           </p>
 
           {/* CTAs */}
@@ -236,7 +230,7 @@ Generated via RiskSearcher Multi-Judge SEC-KERNEL`;
           <div className="flex items-center gap-3 mt-4 text-[11px] font-mono text-[#8c909f]">
             <span className="flex items-center gap-1">
               <span className="text-[#4edea3] material-symbols-outlined text-[14px]">check</span>
-              Google &amp; Apple Passkey supported
+              Passkey authentication
             </span>
             <span>•</span>
             <span className="flex items-center gap-1">
@@ -252,9 +246,9 @@ Generated via RiskSearcher Multi-Judge SEC-KERNEL`;
                 <span>01 / REASONING</span>
                 <span className="material-symbols-outlined text-[16px] text-[#ffb4ab]">lock</span>
               </div>
-              <h3 className="font-bold text-sm text-[#dae2fd]">5-Stage Multi-Judge AI</h3>
+              <h3 className="font-bold text-sm text-[#dae2fd]">Specialist + Judge Analysis</h3>
               <p className="text-xs text-[#8c909f] mt-1 leading-relaxed">
-                Parallel consensus between Decompiler Agent, Trap Hunter, Protocol Architect, and Threat Assessor.
+                A specialist reviews contract-risk patterns, then a judge reconciles those findings with the deterministic rules engine.
               </p>
             </div>
 
@@ -263,9 +257,9 @@ Generated via RiskSearcher Multi-Judge SEC-KERNEL`;
                 <span>02 / HARDWARE SIM</span>
                 <span className="material-symbols-outlined text-[16px] text-[#ffb4ab]">lock</span>
               </div>
-              <h3 className="font-bold text-sm text-[#dae2fd]">Deterministic Opcode Tracer</h3>
+              <h3 className="font-bold text-sm text-[#dae2fd]">Bytecode + Transaction Evidence</h3>
               <p className="text-xs text-[#8c909f] mt-1 leading-relaxed">
-                Live Anvil/Hardhat mempool dry-runs simulate transferFrom traps and fee modulations before transactions broadcast.
+                Opcode scanning and transaction-history evidence keep analysis useful even when verified Solidity source is unavailable.
               </p>
             </div>
 
@@ -276,7 +270,7 @@ Generated via RiskSearcher Multi-Judge SEC-KERNEL`;
               </div>
               <h3 className="font-bold text-sm text-[#dae2fd]">World ID Sybil-Defense</h3>
               <p className="text-xs text-[#8c909f] mt-1 leading-relaxed">
-                Claim 15 free forensic scans via zero-knowledge proof or fund your self-custodial smart account with USDC.
+                Verify once for 3 free scans, or buy 10 scans for $5 testnet USDC on Arc.
               </p>
             </div>
           </div>
@@ -287,6 +281,21 @@ Generated via RiskSearcher Multi-Judge SEC-KERNEL`;
 
   return (
     <div className="flex flex-col w-full min-h-[calc(100vh-4rem)]">
+      {accessPromptOpen && (
+        <div className="fixed inset-0 z-[60] bg-[#060e20]/80 backdrop-blur-sm p-4 flex items-center justify-center">
+          <div className="w-full max-w-sm bg-[#131b2e] border border-[#222a3d] rounded-2xl p-5 shadow-2xl space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div><h3 className="font-bold text-[#dae2fd]">Scan access required</h3><p className="font-mono text-[10px] text-[#8c909f] mt-1">Every fresh analysis and re-analysis consumes one server-enforced scan credit.</p></div>
+              <button type="button" onClick={() => setAccessPromptOpen(false)} className="p-1 text-[#8c909f] hover:text-[#dae2fd]"><span className="material-symbols-outlined">close</span></button>
+            </div>
+            {!userAccount.isWorldIdVerified && (
+              <button type="button" onClick={() => { setAccessPromptOpen(false); onOpenWorldIdModal(); }} className="w-full py-3 rounded-xl bg-[#4edea3] text-[#003824] font-bold text-sm flex items-center justify-center gap-2"><span className="material-symbols-outlined text-[18px]">fingerprint</span>Verify humanity — get 3 free scans</button>
+            )}
+            <button type="button" onClick={() => { setAccessPromptOpen(false); onOpenSubscriptionModal(); }} className="w-full py-3 rounded-xl bg-[#4d8eff] text-[#00285d] font-bold text-sm flex items-center justify-center gap-2"><span className="material-symbols-outlined text-[18px]">stars</span>Get 10 scans — $5 testnet USDC</button>
+            {userAccount.isWorldIdVerified && <p className="text-center font-mono text-[10px] text-[#8c909f]">Your 3 free scans have been used. Buy another 10-scan pack to continue.</p>}
+          </div>
+        </div>
+      )}
       {/* Flagship Demos Quick Launcher Strip */}
       <div className="w-full bg-[#060e20] px-4 lg:px-6 py-2 border-b border-[#222a3d]/70">
         <div className="max-w-[88rem] mx-auto flex flex-wrap items-center justify-between gap-2">
@@ -403,7 +412,7 @@ Generated via RiskSearcher Multi-Judge SEC-KERNEL`;
                 <span>Scan History</span>
                 <span className="text-[#4edea3] flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-[#4edea3] animate-ping"></span>
-                  Multi-Judge
+                  Specialist + Judge
                 </span>
               </div>
 
@@ -475,7 +484,7 @@ Generated via RiskSearcher Multi-Judge SEC-KERNEL`;
           </aside>
 
           {/* Right Detailed Analysis Pipeline (Cols 5-12) */}
-          <section className="lg:col-span-8 xl:col-span-9 flex flex-col bg-[#060e20] rounded-xl border border-[#222a3d] p-4 lg:p-5 relative overflow-hidden">
+          <section ref={analysisTopRef} className="lg:col-span-8 xl:col-span-9 flex flex-col bg-[#060e20] rounded-xl border border-[#222a3d] p-4 lg:p-5 relative overflow-hidden scroll-mt-20">
             {/* Top Analysis Header */}
             <div className="flex flex-wrap items-center justify-between pb-3 gap-2 bg-[#131b2e] px-4 py-2.5 rounded-lg border border-[#222a3d]">
               <div className="flex items-center gap-3">
@@ -572,13 +581,13 @@ Generated via RiskSearcher Multi-Judge SEC-KERNEL`;
                       <span className="material-symbols-outlined text-[16px]">
                         {scanCurrentStage > 3 ? 'check_circle' : scanCurrentStage === 3 ? 'sync' : 'radio_button_unchecked'}
                       </span>
-                      <span>Stage 3: Running specialist reasoning (tax, balance &amp; mempool agents)...</span>
+                      <span>Stage 3: Running specialist contract-risk reasoning...</span>
                     </div>
                     <div className={`flex items-center gap-2 ${scanCurrentStage >= 4 ? 'text-[#4edea3]' : 'text-[#8c909f]'}`}>
                       <span className="material-symbols-outlined text-[16px]">
                         {scanCurrentStage > 4 ? 'check_circle' : scanCurrentStage === 4 ? 'sync' : 'radio_button_unchecked'}
                       </span>
-                      <span>Stage 4: Running judge tribunal reconciliation...</span>
+                      <span>Stage 4: Running judge reconciliation...</span>
                     </div>
                     <div className={`flex items-center gap-2 ${scanCurrentStage >= 5 ? 'text-[#4edea3]' : 'text-[#8c909f]'}`}>
                       <span className="material-symbols-outlined text-[16px]">
@@ -710,7 +719,7 @@ Generated via RiskSearcher Multi-Judge SEC-KERNEL`;
                         <h3 className="font-semibold text-sm text-[#dae2fd]">Transaction Behavior &amp; Telemetry</h3>
                       </div>
                       <span className="font-mono text-[10px] text-[#4edea3] uppercase bg-[#00a572]/20 px-2 py-0.5 rounded">
-                        Mempool Topology
+                        Historical Activity
                       </span>
                     </div>
 
@@ -922,7 +931,7 @@ Generated via RiskSearcher Multi-Judge SEC-KERNEL`;
                         <span>Specialist Reasoning &amp; Judge Assessment</span>
                       </h3>
                       <span className="font-mono text-[10px] text-[#adc6ff]">
-                        Multi-LLM Jury
+                        Specialist + Judge
                       </span>
                     </div>
 
@@ -1000,14 +1009,14 @@ Generated via RiskSearcher Multi-Judge SEC-KERNEL`;
 
                   <button
                     type="button"
-                    onClick={handleReRunSimulation}
-                    disabled={isReSimulating}
-                    className="bg-[#93000a] hover:bg-[#ffb4ab] text-[#ffdad6] hover:text-[#690005] font-mono text-xs font-semibold px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 shadow-sm"
+                    onClick={() => startScan(activeToken.address, activeToken.network)}
+                    disabled={isScanning}
+                    className="bg-[#93000a] hover:bg-[#ffb4ab] disabled:opacity-60 text-[#ffdad6] hover:text-[#690005] font-mono text-xs font-semibold px-3.5 py-2 rounded-lg transition-all flex items-center gap-1.5 shadow-sm"
                   >
-                    <span className={`material-symbols-outlined text-[16px] ${isReSimulating ? 'animate-spin' : ''}`}>
-                      {isReSimulating ? 'sync' : 'play_arrow'}
+                    <span className={`material-symbols-outlined text-[16px] ${isScanning ? 'animate-spin' : ''}`}>
+                      {isScanning ? 'sync' : 'replay'}
                     </span>
-                    <span>{isReSimulating ? 'Simulating...' : 'Re-run Dry Sell Simulator'}</span>
+                    <span>{isScanning ? 'Analyzing...' : 'Re-run Full Analysis (1 Scan)'}</span>
                   </button>
                 </div>
               </div>
@@ -1043,19 +1052,23 @@ Generated via RiskSearcher Multi-Judge SEC-KERNEL`;
                   </div>
 
                   <div className="font-mono text-xs text-[#8c909f]">
-                    {userAccount.isWorldIdVerified ? (
+                    {userAccount.paidScansRemaining > 0 ? (
                       <span className="text-[#4edea3] font-bold">
-                        {userAccount.freeScansRemaining} Free Checks Left
+                        {userAccount.freeScansRemaining} Free + {userAccount.paidScansRemaining} Paid Scans
+                      </span>
+                    ) : userAccount.isWorldIdVerified ? (
+                      <span className="text-[#4edea3] font-bold">
+                        {userAccount.freeScansRemaining} Free Scans
                       </span>
                     ) : (
-                      <span className="text-[#ffb4ab] font-bold">Humanity Unverified</span>
+                      <span className="text-[#ffb4ab] font-bold">No scan credits</span>
                     )}
                   </div>
                 </div>
 
                 {/* Input Bar */}
-                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 bg-[#060e20] p-1.5 rounded-lg border border-[#222a3d] focus-within:border-[#4cd7f6]/60 transition-colors">
-                  <div className="flex items-center gap-2 min-w-0">
+                <div className="grid grid-cols-1 gap-2 bg-[#060e20] p-2 rounded-lg border border-[#222a3d] focus-within:border-[#4cd7f6]/60 transition-colors">
+                  <div className="flex items-center gap-2 min-w-0 w-full">
                     <span className="material-symbols-outlined text-[#8c909f] pl-2 text-[20px] shrink-0">
                       search_insights
                     </span>
@@ -1072,7 +1085,7 @@ Generated via RiskSearcher Multi-Judge SEC-KERNEL`;
                     type="submit"
                     disabled={isScanning}
                     title={isScanning ? 'Analysis in progress' : 'Run a fresh analysis, even for a completed history entry'}
-                    className="bg-[#4d8eff] hover:bg-[#adc6ff] disabled:cursor-not-allowed disabled:opacity-70 text-[#00285d] hover:text-[#002e6a] px-4 py-2 rounded-lg font-semibold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-all active:scale-[0.99] shadow-sm shrink-0 w-full sm:w-auto"
+                    className="bg-[#4d8eff] hover:bg-[#adc6ff] disabled:cursor-not-allowed disabled:opacity-70 text-[#00285d] hover:text-[#002e6a] px-4 py-2 rounded-lg font-semibold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-all active:scale-[0.99] shadow-sm w-full"
                   >
                     {isScanning ? (
                       <>

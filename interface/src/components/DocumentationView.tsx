@@ -17,11 +17,11 @@ export const DocumentationView: React.FC<DocumentationViewProps> = ({
       <div className="space-y-2 pb-4 border-b border-[#222a3d]">
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#171f33] border border-[#222a3d] text-xs font-mono text-[#4cd7f6]">
           <span className="material-symbols-outlined text-[16px]">menu_book</span>
-          <span>RISKSEARCHER SPECIFICATIONS &amp; API SPEC v4.22</span>
+          <span>RISKSEARCHER PRODUCT &amp; ANALYSIS NOTES</span>
         </div>
         <h1 className="text-3xl font-bold text-[#dae2fd]">Documentation &amp; Forensic Mechanics</h1>
         <p className="text-sm text-[#c2c6d6] max-w-3xl">
-          Complete guide to how RiskSearcher conducts adversarial opcode decompilation, sandboxed sell simulation, and multi-LLM consensus classification.
+          Overview of RiskSearcher's deterministic rule analysis, verified-source/bytecode fallback, transaction evidence, and specialist + judge reasoning pipeline.
         </p>
       </div>
 
@@ -31,40 +31,41 @@ export const DocumentationView: React.FC<DocumentationViewProps> = ({
           <div className="bg-[#131b2e] p-6 rounded-xl border border-[#222a3d] space-y-4">
             <h2 className="text-lg font-bold text-[#dae2fd] flex items-center gap-2">
               <span className="material-symbols-outlined text-[#4d8eff]">settings_system_daydream</span>
-              <span>1. Deterministic Sandbox Simulation</span>
+              <span>1. Deterministic Contract Analysis</span>
             </h2>
             <p className="text-xs sm:text-sm text-[#c2c6d6] leading-relaxed">
-              Whenever an address is queried, RiskSearcher immediately spins up an ephemeral state fork at the current block height. We fund a dummy test account with simulated native token collateral and attempt a two-step transaction:
+              For each address, RiskSearcher fetches verified source when available and falls back to bytecode/opcode inspection when it is not. Deterministic rules identify concrete risk signals before the LLM review stage.
             </p>
-            <ol className="list-decimal list-inside space-y-2 text-xs sm:text-sm text-[#dae2fd] font-mono pl-2">
-              <li><strong className="text-[#4cd7f6]">buyTokens():</strong> Swap native ETH/USDC for target tokens via the highest liquidity pool.</li>
-              <li><strong className="text-[#ffb4ab]">sellTokens():</strong> Approve the router and swap target tokens back to the base pair.</li>
-            </ol>
+            <ul className="space-y-2 text-xs sm:text-sm text-[#dae2fd] font-mono pl-2">
+              <li>• Verified source analysis when explorer source is available.</li>
+              <li>• Bytecode/opcode fallback for unverified contracts.</li>
+              <li>• Historical transaction and The Graph evidence where available.</li>
+            </ul>
             <p className="text-xs text-[#8c909f] leading-relaxed">
-              If the sell transaction reverts with opcode 0xFD, custom error 0x08c379a0, or consumes &gt; 500,000 gas units, the token is deterministically categorized as an active Honeypot.
+              The rules engine produces deterministic findings and a baseline score; it does not pretend to execute a live mempool or local-fork sell simulation.
             </p>
           </div>
 
           <div className="bg-[#131b2e] p-6 rounded-xl border border-[#222a3d] space-y-4">
             <h2 className="text-lg font-bold text-[#dae2fd] flex items-center gap-2">
               <span className="material-symbols-outlined text-[#4cd7f6]">psychology</span>
-              <span>2. Multi-LLM Specialist Jury</span>
+              <span>2. Specialist + Judge Reasoning</span>
             </h2>
             <p className="text-xs sm:text-sm text-[#c2c6d6] leading-relaxed">
-              Dynamic taxes and time-delayed rugs cannot always be triggered in a single block. To prevent countdown traps, decompiled abstract syntax trees (AST) are concurrently evaluated by three specialized AI models:
+              An LLM specialist checks the contract for common rug and honeypot patterns, then a judge reconciles those findings against the deterministic rules engine before RiskSearcher presents the final verdict.
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
               <div className="bg-[#060e20] p-3 rounded-lg border border-[#222a3d]">
-                <span className="font-mono text-[11px] text-[#4cd7f6] font-bold block">Tax Logic Agent</span>
-                <span className="text-xs text-[#c2c6d6] mt-1 block">Detects variable math modifiers and uncapped fee setters.</span>
+                <span className="font-mono text-[11px] text-[#4cd7f6] font-bold block">Risk Specialist</span>
+                <span className="text-xs text-[#c2c6d6] mt-1 block">Reviews liquidity, mint privilege, trading controls, upgradeability, ownership, sell blocking, and balance gating.</span>
               </div>
               <div className="bg-[#060e20] p-3 rounded-lg border border-[#222a3d]">
-                <span className="font-mono text-[11px] text-[#4edea3] font-bold block">Proxy Storage Agent</span>
-                <span className="text-xs text-[#c2c6d6] mt-1 block">Finds hidden fallback admins and diamond storage traps.</span>
+                <span className="font-mono text-[11px] text-[#4edea3] font-bold block">Deterministic Rules</span>
+                <span className="text-xs text-[#c2c6d6] mt-1 block">Provides reproducible source/bytecode findings and baseline scoring.</span>
               </div>
               <div className="bg-[#060e20] p-3 rounded-lg border border-[#222a3d]">
-                <span className="font-mono text-[11px] text-[#adc6ff] font-bold block">Consensus Judge</span>
-                <span className="text-xs text-[#c2c6d6] mt-1 block">Aggregates execution logs into the final 0-100 score.</span>
+                <span className="font-mono text-[11px] text-[#adc6ff] font-bold block">Judge</span>
+                <span className="text-xs text-[#c2c6d6] mt-1 block">Reconciles specialist findings with deterministic evidence for the final assessment.</span>
               </div>
             </div>
           </div>
@@ -72,53 +73,20 @@ export const DocumentationView: React.FC<DocumentationViewProps> = ({
           <div className="bg-[#131b2e] p-6 rounded-xl border border-[#222a3d] space-y-4">
             <h2 className="text-lg font-bold text-[#dae2fd] flex items-center gap-2">
               <span className="material-symbols-outlined text-[#4edea3]">api</span>
-              <span>3. Programmatic API Integration</span>
+              <span>3. Programmatic API Access</span>
             </h2>
-            <p className="text-xs sm:text-sm text-[#c2c6d6] leading-relaxed">
-              Integrate RiskSearcher directly into your decentralized application, trading bot, or wallet RPC proxy using standard HTTP POST requests:
-            </p>
-            <pre className="font-mono text-xs bg-[#060e20] p-3 rounded border border-[#222a3d] text-[#adc6ff] overflow-x-auto">
-{`curl -X POST https://api.risksearcher.sec/v1/scan \\
-  -H "Authorization: Bearer rk_live_9f829f041b..." \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "network": "ethereum",
-    "contract": "0x6B175474E89094C44Da98b954EedeAC495271d0F"
-  }'`}
-            </pre>
-
-            {/* Authenticated API Keys Gate Notice */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3.5 rounded-lg bg-[#060e20] border border-[#222a3d]">
-              <div className="flex items-center gap-2.5 text-xs text-[#c2c6d6]">
-                <span className="material-symbols-outlined text-[18px] text-[#ffb4ab]">
-                  {isWalletConnected ? 'key' : 'lock'}
-                </span>
-                <span>
-                  {isWalletConnected
-                    ? 'Your unique API key is active and provisioned for your account.'
-                    : 'Production API tokens and quota are private and require an authenticated wallet.'}
-                </span>
+            <div className="rounded-lg border border-[#222a3d] bg-[#060e20] p-4">
+              <div className="flex items-center gap-2 font-semibold text-[#dae2fd]">
+                <span className="material-symbols-outlined text-[18px] text-[#8c909f]">schedule</span>
+                Public API keys are coming soon
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  if (!isWalletConnected) {
-                    onOpenWalletModal?.(
-                      'Authentication Required: Connect your Web3 wallet or sign in to view and generate your Production Audit API Key.'
-                    );
-                  } else {
-                    onNavigate('accounts');
-                  }
-                }}
-                className="font-mono text-xs font-semibold px-3 py-1.5 rounded bg-[#222a3d] hover:bg-[#2d3449] text-[#4cd7f6] hover:text-[#acedff] flex items-center gap-1.5 shrink-0 transition-colors"
-              >
-                {!isWalletConnected && (
-                  <span className="material-symbols-outlined text-[14px] text-[#ffb4ab]">lock</span>
-                )}
-                <span>{isWalletConnected ? 'Manage API Key' : 'Connect to View API Key'}</span>
-                <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
-              </button>
+              <p className="mt-2 text-xs sm:text-sm text-[#c2c6d6] leading-relaxed">
+                The current web app uses a passkey-authenticated backend session. RiskSearcher does not expose or display a fake production API token.
+              </p>
             </div>
+            <button type="button" onClick={() => isWalletConnected ? onNavigate('accounts') : onOpenWalletModal?.('Sign in with your passkey to view your account and scan credits.')} className="font-mono text-xs font-semibold px-3 py-2 rounded bg-[#222a3d] hover:bg-[#2d3449] text-[#4cd7f6] transition-colors">
+              {isWalletConnected ? 'View account' : 'Sign in'}
+            </button>
           </div>
         </div>
 
@@ -132,7 +100,7 @@ export const DocumentationView: React.FC<DocumentationViewProps> = ({
                 onClick={() => {
                   if (!isWalletConnected) {
                     onOpenWalletModal?.(
-                      'Authentication Required: Connect your Web3 wallet or sign in to launch interactive contract scans.'
+                      'Sign in with your passkey to launch interactive contract scans.'
                     );
                   } else {
                     onNavigate('scanner');
@@ -153,7 +121,7 @@ export const DocumentationView: React.FC<DocumentationViewProps> = ({
                 onClick={() => {
                   if (!isWalletConnected) {
                     onOpenWalletModal?.(
-                      'Authentication Required: Connect your Web3 wallet or sign in with Passkey / Google / Apple to view your Production API Key, balances, and quota.'
+                      'Sign in with your passkey to view your real balance, scan credits, and activity.'
                     );
                   } else {
                     onNavigate('accounts');
@@ -165,7 +133,7 @@ export const DocumentationView: React.FC<DocumentationViewProps> = ({
                   {!isWalletConnected && (
                     <span className="material-symbols-outlined text-[16px] text-[#ffb4ab]">lock</span>
                   )}
-                  <span>View API Keys &amp; Quota</span>
+                  <span>View Wallet &amp; Scan Credits</span>
                 </div>
                 <span className="material-symbols-outlined text-[16px]">
                   {isWalletConnected ? 'key' : 'lock'}
@@ -187,7 +155,7 @@ export const DocumentationView: React.FC<DocumentationViewProps> = ({
               Auditor Note
             </span>
             <p className="text-xs text-[#c2c6d6] leading-relaxed">
-              RiskSearcher is developed under the Open EVM Security Standard. Opcode patterns and heuristic models are updated continuously with newly observed on-chain exploit signatures.
+              RiskSearcher combines deterministic source/bytecode checks with transaction evidence and an LLM specialist + judge. Results are risk signals, not a substitute for a full manual audit.
             </p>
           </div>
         </div>

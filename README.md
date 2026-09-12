@@ -219,7 +219,7 @@ Keep secrets and provider keys in local environment files only; do not commit th
 
 ## 10. ETHOnline 2026 — Track Submissions
 
-RiskSearcher is submitted in the **Continuity pool** (extending the pre-existing repo documented in [`PRIOR_STATE.md`](./docs/PRIOR_STATE.md)) for two tracks. Both integrations are live, tested, and load-bearing — not stubs added for qualification.
+RiskSearcher is submitted in the **Continuity pool** (extending the pre-existing repo documented in [`PRIOR_STATE.md`](./docs/PRIOR_STATE.md)) for two tracks. Both integrations are implemented as load-bearing product paths rather than qualification-only stubs.
 
 ### 10.1 The Graph — Best AI Tooling or AI Use Case (Continuity)
 
@@ -232,10 +232,10 @@ RiskSearcher is a **risk monitor** (the track's own example category — *"resea
 
 ### 10.2 Circle Arc — Treasury / FX Track
 
-- **Real treasury, not a mock wallet:** every connected user gets an actual Circle Developer-Controlled Wallet on Arc, created via [`rpc/arc_provider.py`](./rpc/arc_provider.py). Add Funds, Send, Withdraw, and Subscription payments are genuine on-chain USDC transfers (USDC is Arc's native gas asset), not `setTimeout`-simulated UI states.
+- **Real treasury, not a mock balance:** each authenticated passkey identity maps to an actual Circle Developer-Controlled Wallet on Arc, created/resolved via [`rpc/arc_provider.py`](./rpc/arc_provider.py). Receive/faucet, direct Arc sends, and scan-pack payments use real Arc Testnet wallet state. Fiat on-ramp and off-ramp are explicitly marked **Coming soon** and are not simulated.
 - **Deployment-ready on Arc mainnet:** every blockchain reference is controlled by one `ARC_BLOCKCHAIN` environment variable (defaults to `ARC-TESTNET`) — switching to mainnet is a config change, not a code change, verified by a test that flips the variable and confirms it reaches wallet creation, lookup, *and* transfers.
 - **Resilient to Render's ephemeral disk:** wallet identity is keyed by Circle's own `ref_id` index, not just a local cache file — confirmed live: a redeploy that wiped the local cache still resolved the same user back to their same real wallet instead of silently minting a new, empty one.
-- **Demo-safe pricing:** the subscription price is configurable (`VITE_SUBSCRIPTION_PRICE_USDC`, default $5) specifically so a tester using Circle's public testnet faucet can complete a full subscribe-and-test cycle without running out of funds mid-demo.
+- **Server-authoritative testnet access:** World ID verification grants exactly **3 free scans** once per verified human. A confirmed **$5 testnet USDC** payment grants **10 paid scan credits**. Pricing and credit quantities are backend constants; the browser cannot grant itself scans.
 
 ### 10.3 What each track's evidence looks like end-to-end
 
@@ -243,8 +243,13 @@ RiskSearcher is a **risk monitor** (the track's own example category — *"resea
 |---|---|
 | Graph: live data feeding real reasoning | Run a scan (`main.py` or the deployed app) on a token with a Uniswap V3 pool — see the "Live Liquidity" section of the report and the specialist's reasoning about it |
 | Graph: honest degradation | `tests/test_graph_provider.py::test_nonzero_tvl_with_zero_pools_is_marked_unreliable` |
-| Arc: real transfer | `POST /arc/withdraw` or `/arc/subscribe` — returns a real Circle transaction ID, verifiable on Arc Testnet |
+| Arc: real transfer + scan-pack payment | `POST /arc/send` performs a real Arc Testnet wallet transfer; `POST /arc/subscribe` starts the fixed $5 payment and `/arc/subscription-status` grants 10 scans only after Circle confirmation |
 | Arc: mainnet-ready | `tests/test_arc_provider.py::test_arc_blockchain_env_var_switches_network_end_to_end` |
 | Arc: redeploy-resilient identity | `tests/test_arc_provider.py::test_finds_existing_wallet_via_ref_id_after_cache_loss` |
+
+
+### 10.4 Access-control boundary
+
+The web UI is not the authorization layer. Passkey smart accounts sign a short-lived backend challenge, which creates an opaque session. `/analyze`, wallet, ledger, history, World ID claim, and payment endpoints derive the user wallet from that session rather than trusting a caller-supplied address. `/analyze` atomically reserves one Firestore credit before work begins; failed analyses refund the reservation, and successful analyses commit it to the per-user service ledger.
 
 Also live in this submission, not yet reflected in the architecture diagram above: real, per-address **scan history** persisted in Firestore (`db/scan_history_store.py`), so a returning user sees their own past scans instead of a session-only list. This isn't a track requirement for Graph or Arc — it's a product gap that came up during testing and was worth fixing regardless.

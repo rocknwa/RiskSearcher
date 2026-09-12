@@ -155,6 +155,6 @@
 
   <!-- Footer -->
   <text x="700" y="755" text-anchor="middle" font-size="11.5" fill="#90a4ae">Track qualification: live, load-bearing use of The Graph (reasoning over real evidence, not a raw query dump)</text>
-  <text x="700" y="772" text-anchor="middle" font-size="11.5" fill="#90a4ae">and a real Arc-powered treasury feature (deposit, balance, transfer, subscription) in a live multi-chain product.</text>
+  <text x="700" y="772" text-anchor="middle" font-size="11.5" fill="#90a4ae">and a real Arc-powered treasury feature (deposit, balance, transfer, scan-pack payment) in a live multi-chain product.</text>
   <text x="700" y="800" text-anchor="middle" font-size="11" font-style="italic" fill="#b0bec5">World AgentKit / Selfie Check integration in progress — diagram will be extended once merged.</text>
 </svg>
