@@ -1,8 +1,12 @@
- # RiskSearcher
+# RiskSearcher
 
-**Single-address smart contract risk analysis for Ethereum and EVM-compatible contracts.**
+**A full-stack smart-contract risk intelligence product for Ethereum and EVM-compatible chains.**
 
-Paste a contract address, pick a chain, get a verdict — with the reasoning that produced it, not just a score.
+Paste a contract address, choose a chain, and RiskSearcher streams a verdict, score, reasoning, bytecode/source evidence, transaction-risk signals, and live liquidity context into the browser. Access is protected by passkey authentication, World ID human verification for the free trial, and USDC scan credits on Circle Arc.
+
+**Live product:** https://risksearcher.vercel.app
+
+The original analysis engine still works from the CLI, but the hackathon build turns it into a user-facing product with authentication, payments, Sybil-resistant access, persisted history, live on-chain data, and server-enforced entitlements.
 
 ---
 
@@ -20,7 +24,7 @@ Paste a contract address, pick a chain, get a verdict — with the reasoning tha
 
 None of this is hard for an expert. It's slow, expertise-gated, and inconsistent between reviewers — and the tokens that most need scrutiny (fresh launches, unverified source, honeypots) are exactly the ones where this manual process breaks down fastest. A contract can look completely clean in a naive rule scan and still be an active honeypot, because the exploit lives in *why* a function behaves the way it does, not just *whether* a risky-sounding function exists.
 
-**What "solving it well" means:** replacing that whole manual sequence with one command — `python main.py` — that returns a verdict a person can actually act on, with the evidence spelled out, in about a minute.
+**What "solving it well" means now:** a user should not need Solidity expertise, a local Python environment, or five browser tabs. They open RiskSearcher, sign in with a passkey, verify as a unique human for a small free trial or buy scan credits in USDC, paste a contract address, and watch the analysis stream live. The result is persisted to their account with the evidence and reasoning needed to act on it.
 
 ## 2. Baseline
 
@@ -38,7 +42,32 @@ FARTPEPE is the hard case worth calling out explicitly: it's the one contract wh
 
 ## Prior state of the project
 
-See [`PRIOR_STATE.md`](./docs/PRIOR_STATE.md) for a full, stable record of what this project was before ETHOnline 2026 — kept separate so it doesn't get lost or reworded as this README evolves to describe the final submitted product.
+RiskSearcher existed before ETHOnline as a **CLI-only smart-contract analysis engine**. There was no React frontend, no deployed FastAPI/SSE product API, no wallet/passkey identity, no paid scan flow, no World ID trial gate, and no per-user account/ledger experience. The hackathon work turned that engine into the deployed product shown in this submission.
+
+See [`docs/PRIOR_STATE.md`](./docs/PRIOR_STATE.md) for a stable record of the pre-hackathon project. In short, the starting point was a local/CLI risk-analysis engine: rules, scoring, transaction analysis, FAISS patterns, an LLM client, RPC access, and regression tests. It did **not** have a production web app, API/SSE streaming, user accounts, passkey authentication, World ID, Circle/Arc payments, scan entitlements, Firestore account state, per-user ledger/history, or The Graph liquidity evidence.
+
+
+## What changed during ETHOnline 2026
+
+The hackathon work is the productization layer **and** the sponsor integrations that made RiskSearcher usable as a real service rather than only a local analysis engine.
+
+| Before the hackathon | Built during ETHOnline 2026 | Why it matters |
+|---|---|---|
+| Local/CLI analysis flow | **React + Vite web product** deployed on Vercel | A non-technical user can scan a contract from a browser instead of cloning a repo and running Python |
+| Synchronous local execution | **FastAPI backend + SSE streaming** on Render | Users see analysis stages and results as they happen instead of waiting on a silent long-running request |
+| No user identity | **Circle Modular Wallet passkey login** with WebAuthn / ERC-4337 smart accounts | Passwordless sign-in using Windows Hello, Face ID, Touch ID, Android biometrics, or a security key |
+| No proof that a submitted wallet belongs to the caller | **Signed backend nonce + ERC-6492/ERC-1271 smart-account verification + server sessions** | The API no longer trusts an arbitrary `user_address`; direct calls must prove control of the passkey smart account |
+| No free-trial abuse protection | **World ID Selfie Check** with server-side proof verification and nullifier-based claim tracking | One verified human can claim **3 free scans**, even if they try another wallet/browser |
+| No payment rail | **Circle Developer-Controlled Wallet on Arc Testnet** | Each user gets a real Arc treasury wallet resolved by Circle `ref_id`; the UI shows the real balance, never a seeded/demo balance |
+| No paid access model | **$5 USDC → 10 scan credits** | A real Arc Testnet USDC payment funds a usable scan pack; credits are granted server-side only after payment confirmation |
+| CLI-only local interface; no web access-control layer | **Deployed React/Vite product + authenticated FastAPI/SSE backend + server-side entitlement ledger** | Users can scan from the browser, while `/analyze` is protected server-side and every fresh scan/re-analysis consumes an entitlement |
+| No durable user account state | **Firestore auth, entitlement, World ID, ledger and scan-history stores** | Refreshes/redeploys do not reset who paid, who verified, or what a user scanned |
+| Analysis lacked decentralized liquidity context | **The Graph Gateway / Uniswap V3 liquidity evidence** | TVL, pool count, pool age and swap-volume evidence feeds the specialist's reasoning and appears in the UI |
+| No account activity view | **Real per-user Ledger Activity** | The account page reflects actual service-credit and wallet activity rather than mock `$50` deposits or fake allocations |
+| No product access UX | **Responsive scanner, access gates, account/pricing/docs views, real balance/faucet guidance** | Users are prompted to verify or subscribe before scanning, analysis auto-scrolls into view, and mobile/desktop flows are usable |
+| No mainnet path for payments | **`ARC_BLOCKCHAIN` network switch and network-scoped wallet lookup/cache** | The Arc integration is structured for a testnet → mainnet configuration change instead of a rewrite |
+
+Two UX decisions are intentionally explicit in the current testnet product: **on-ramp and off-ramp are marked Coming Soon** rather than mocked, and testnet users are sent to the faucet to fund the real Arc wallet. The product does not pretend testnet USDC has real-world value.
 
 ## 3. What RiskSearcher does
 
@@ -54,17 +83,26 @@ Given one address and a chain, RiskSearcher runs a five-stage pipeline and produ
 
 - **Etherscan source checks** when the contract is verified — full source is scanned for known-dangerous patterns (owner-gated transfers, blacklist/freeze hooks, upgrade backdoors, etc.).
 - **RPC bytecode + chain context** via Alchemy, used both when source is unverified and as ground truth alongside source when it is.
-- **Source and bytecode scanning rules** (`core/rules.py`) — selector and opcode pattern matching, byte-value correct (not string-substring — see the SELFDESTRUCT bug in the changelog for why that distinction matters).
+- **Source and bytecode scanning rules** (`core/rules.py`) — selector and opcode pattern matching, byte-value correct (not string-substring — using integer byte-value comparisons rather than unsafe string-substring matching).
 - **Transaction behavior analysis** (`core/tx_analysis.py`) — honeypot/drain and outbound-concentration checks, filtered to real-value transfers only, so zero-value spam transfers (a common phishing/airdrop-populate tactic) can't masquerade as a drain.
 - **Live liquidity evidence from The Graph** (`rpc/graph_provider.py`) — queries The Graph Gateway's Uniswap V3 Ethereum-mainnet subgraph for a token's total USD liquidity, pool count, first observed swap, and 24-hour/7-day swap volume. Those figures are sent as a named evidence block to the LLM specialist, which must reason about thin or very new liquidity and volume/liquidity mismatches as legitimacy and liquidity-pull signals; they are also shown in the report. If `GRAPH_API_KEY` is unavailable or the query has no data, the pipeline records that explicitly and continues without treating absence as a safety signal.
 - **FAISS similarity search** (`db/vector_store.py`) against a seeded corpus of known scam patterns, with writes scoped to confirmed patterns only so the corpus can't self-contaminate from its own prior verdicts.
 - **A tiered LLM specialist + judge pass** — the actual agentic layer, described in detail below — that can override the rule-based verdict when it has real evidence to justify it, and is skipped cleanly when it doesn't.
 
-**Primary workflow:**
+**Primary workflow — deployed web product:**
+
+1. Open **https://risksearcher.vercel.app**.
+2. Create or sign in to a Circle passkey smart account.
+3. Claim **3 free scans** after World ID Selfie Check, or purchase **10 scans for $5 USDC** on Arc Testnet.
+4. Paste a contract address and choose the EVM network.
+5. RiskSearcher streams the five analysis stages over SSE, then renders the verdict, evidence, The Graph liquidity data, and reasoning in the browser.
+6. The scan and account activity are persisted for that authenticated user.
+
+**CLI remains available for local/developer use:**
 ```bash
 python main.py
 ```
-No flags required — it's interactive: paste the address, pick a chain from a short numbered list (Enter defaults to Ethereum), and the CLI shows live per-stage progress as it runs. `--address` and `--chain` flags are still available for scripting or judges who want a non-interactive run.
+The CLI still runs the core engine directly and is useful for scripting and regression work, but it is no longer the main product experience.
 
 ---
 
@@ -80,21 +118,19 @@ Early on, LLM specialist output was attached to the report *without* affecting t
 
 This branch is explicit in `core/analyzer.py`, in the same visible style as the existing source-mode/bytecode-mode branch — not buried in an implicit fallback path. See `tests/test_verdict_branching.py` for the behavior this locks in (judge success overrides the rule-based verdict; judge failure or no real specialist response falls back to it cleanly).
 
-### 4.2 Fallback tiers (`llm/client.py`)
+### 4.2 Active provider fallback (`llm/client.py`)
 
-Both the specialist call and the judge call go through the same tiered client, so a missing key or a rate-limited provider degrades gracefully instead of crashing the run:
+The specialist uses the providers that proved reliable for the deployed backend, in this order:
 
-**Specialist tier order:**
-1. **Anthropic direct** (`claude-opus-5`) — used if `ANTHROPIC_API_KEY` is set. Skipped with a plain log line if not.
-2. **AgentRouter** (same Anthropic-compatible SDK, different base URL and model), tried in order:
-   - `deepseek-v4-flash`
-   - `glm-5.3`
-   - (`claude-opus-5`, `claude-opus-4-8`, `gpt-5.6-sol` are wired in but currently commented out — they're known to exhaust this project's AgentRouter quota pool; re-enable them if the pool is topped up.)
-3. **No usable response from any tier** → the pipeline falls back to the pure rule-based verdict, and the report says so explicitly (`verdict_source: rule_based`).
+**Specialist provider order:**
+1. **Anthropic direct** (`claude-opus-5`) when `ANTHROPIC_API_KEY` is configured.
+2. **OpenRouter** (`openrouter/free`) as the next cloud fallback.
+3. **Groq** using `openai/gpt-oss-120b`, then `openai/gpt-oss-20b`.
+4. **No usable LLM response** → keep the deterministic rule-based verdict and record `verdict_source: rule_based`.
 
-An authentication failure (401/unauthorized) on a tier stops retrying *that tier* immediately and moves to the next one; a transient failure (rate limit, timeout, empty/"thinking-only" response) is treated as "try the next model in this tier." Each attempt also gets a generous token budget (20,000 output tokens) — an earlier version capped this at 800 tokens on the first attempt, which meant a reasoning model would sometimes spend its entire budget thinking and return no visible text at all, silently starving the judge of real findings. Raising both attempts' budgets fixed that class of failure outright.
+A missing key simply skips that provider. Authentication failures stop retrying that provider, while transient failures such as rate limits, timeouts, or empty responses move the specialist to the next available provider/model instead of crashing the scan.
 
-**Judge tier:** the judge is called with the *same provider and model the specialist succeeded on* first (`tests/test_verdict_branching.py::test_judge_reuses_same_provider_and_model_as_specialist`), which keeps the reasoning consistent within one run. If that specific call fails, the judge falls through its own Anthropic → AgentRouter tier list independently, same failure semantics as above. If the judge pass fails entirely, the report keeps the rule-based verdict and records why (`judge_error`), rather than silently dropping the discrepancy.
+**Judge behavior:** once the specialist succeeds, the judge deliberately reuses the **same provider and model** that produced the specialist result (`tests/test_verdict_branching.py::test_judge_reuses_same_provider_and_model_as_specialist`). That keeps one analysis internally consistent. If that judge call fails or returns invalid output, RiskSearcher falls back to the deterministic rule-based verdict and records the judge failure instead of manufacturing a verdict or silently hiding the discrepancy.
 
 **Report-level consequence:** the final report always shows *which layer actually produced the displayed verdict and score* — `Verdict source: LLM judge` or `Verdict source: rule-based` — and keeps the raw rule-based score visible separately even when the judge overrides it, so nothing about the rule-based reasoning is hidden by the override (see `reports/Token_0x42eDA424.md` for a real example: judge-driven score 80/UNSAFE/high, rule-based score 5 kept for reference).
 
@@ -106,85 +142,79 @@ Full contract source is sent to the LLM in the specialist/judge prompts, but it 
 
 ## 5. Quick start
 
-### 1. Install dependencies
+### Use the deployed product
+
+Open **https://risksearcher.vercel.app** and use the passkey flow. On Arc Testnet, fund the displayed wallet from the faucet; on-ramp/off-ramp buttons are intentionally marked **Coming Soon** rather than simulated.
+
+Current access model:
+- **World ID verified human:** 3 free scans, one trial claim per World ID nullifier.
+- **Paid scan pack:** $5 USDC on Arc Testnet → 10 scans.
+- **No entitlement:** `/analyze` is rejected by the backend, even if someone bypasses the frontend.
+
+### Run locally
+
 ```bash
 pip install -r requirements.txt
-```
-
-### 2. Configure environment
-```bash
 cp config.env .env
-# Edit .env with your values
-```
-
-Required / relevant variables:
-```bash
-ALCHEMY_API_KEY=...        # multi-chain RPC + bytecode access
-ETHERSCAN_API_KEY=...      # Etherscan V2 — one key, multiple chains, enables source verification
-ANTHROPIC_API_KEY=...      # optional — first specialist/judge tier
-AGENTROUTER_API_KEY=...    # optional — fallback specialist/judge tier(s)
-TOOL_NAME=RiskSearcher
-THREAT_THRESHOLD=30
-```
-RiskSearcher works with **zero** LLM keys configured — it just runs rule-based-only and says so in the report (`verdict_source: rule_based`). The LLM layer is additive, not required.
-
-### 3. Run it
-```bash
+# fill the required provider/server values
 python main.py
 ```
-Follow the prompts: contract address, then a chain (Ethereum, Base, Arbitrum, Optimism, Polygon, BNB Smart Chain, Avalanche — Ethereum and Base are the priority chains, chosen because they're where Alchemy's RPC coverage and Etherscan V2's source-verification coverage both overlap cleanly). Or skip the prompts:
-```bash
-python main.py --address 0xYOUR_CONTRACT_ADDRESS --chain base
-```
 
-### 4. Reproduce the full evaluation
-```bash
-PYTHONPATH=. pytest -q
-PYTHONPATH=. python scripts/run_ground_truth.py
-```
-See [`REPRODUCTION.md`](./REPRODUCTION.md) for the complete reproduction guide, including expected runtime and what output to expect from each command.
+For the full web product, run the FastAPI backend and the Vite frontend with the environment variables documented in `config.env` and `interface/.env.example`. Server secrets must stay on the backend; do not expose them through `VITE_*` variables.
+
+The CLI works with zero LLM keys configured by falling back to the deterministic/rule-based verdict. The deployed product uses the same core analysis engine behind the API.
 
 ---
 
 ## 6. Architecture
 
-![RiskSearcher system architecture — frontend, backend, analysis pipeline, The Graph, Circle Arc, and Firestore](docs/architecture.svg)
+![RiskSearcher system architecture — frontend, authenticated API, analysis pipeline, The Graph, Circle Arc, World ID, and Firestore](docs/diagrams/architecture.svg)
+
+### Circle/Arc payment and entitlement flow
+
+![RiskSearcher Circle/Arc payment, wallet, and entitlement architecture](docs/diagrams/architecture-arc.svg)
+
+The Arc-specific diagram shows the passkey identity layer, authenticated backend session, Circle Developer-Controlled Wallet, USDC scan-pack payment, confirmation, and server-side credit allocation end to end.
 
 ```text
 RiskSearcher/
 ├── api/
-│   └── server.py          # FastAPI + SSE — /analyze, /arc/*, /history (long-lived server, not serverless)
+│   └── server.py              # FastAPI + SSE, authenticated /analyze, Arc, World ID, history, entitlement APIs
 ├── core/
-│   ├── rules.py            # Bytecode selector + opcode pattern matching (integer byte-value comparisons)
-│   ├── scoring.py          # Rule-based risk score computation
-│   ├── analyzer.py         # Orchestrator: rules -> Graph evidence -> specialist -> judge -> report
-│   └── tx_analysis.py      # Behavioral transaction-risk checks (real-value filtered)
+│   ├── analyzer.py            # Rules -> Graph evidence -> specialist -> judge -> report
+│   ├── rules.py               # Source/bytecode selector + opcode checks
+│   ├── scoring.py             # Deterministic risk scoring
+│   ├── tx_analysis.py         # Real-value transaction behavior analysis
+│   └── report.py              # Human-readable analysis output
 ├── rpc/
-│   ├── provider.py         # Etherscan V2 + Alchemy multi-chain source/bytecode/transfer fetches
-│   ├── graph_provider.py   # The Graph Gateway — live Uniswap V3 liquidity evidence (ETHOnline 2026)
-│   ├── arc_provider.py     # Circle Developer-Controlled Wallets on Arc — treasury ops (ETHOnline 2026)
-│   └── world_id_provider.py  # World ID Selfie Check RP-signature + verify (ETHOnline 2026)
-├── llm/
-│   └── client.py           # Tiered specialist + judge client (Anthropic -> OpenRouter -> Groq -> AgentRouter)
+│   ├── provider.py            # Etherscan V2 + Alchemy multi-chain data
+│   ├── graph_provider.py      # The Graph Gateway / Uniswap V3 liquidity evidence
+│   ├── arc_provider.py        # Circle Developer-Controlled Wallets + Arc USDC payments
+│   ├── smart_account_auth.py  # ERC-6492/ERC-1271 passkey smart-account verification
+│   └── world_id_provider.py   # World ID server-side proof + RP-context verification
 ├── db/
-│   ├── vector_store.py     # FAISS similarity search against scam patterns (contamination-guarded writes)
-│   ├── scan_history_store.py  # Firestore-backed per-address scan history (ETHOnline 2026)
-│   ├── world_id_store.py   # Nullifier-keyed free-trial claim ledger (ETHOnline 2026)
-│   └── patterns.json       # Seeded scam-pattern corpus
-├── interface/               # React + Vite frontend (deployed on Vercel)
+│   ├── auth_store.py          # Nonces/sessions for authenticated smart-account access
+│   ├── entitlement_store.py   # Free/paid credits, payment state, atomic scan reservations, ledger
+│   ├── world_id_store.py      # Nullifier-keyed one-human free-trial claims
+│   ├── scan_history_store.py  # Per-user persisted scan history
+│   ├── vector_store.py        # FAISS scam-pattern similarity search
+│   └── patterns.json
+├── interface/                 # React + Vite frontend (Vercel)
 │   └── src/
-│       ├── services/        # riskSearcherApi.ts (SSE), arcApi.ts, worldIdApi.ts, passkeyWallet.ts, historyApi.ts
-│       └── components/      # ScannerView, AccountsView, ConnectWalletModal, WorldIdModal, SubscriptionModal, etc.
-├── scripts/
-│   └── run_ground_truth.py  # Runs the full ground-truth set end-to-end
-├── tests/                   # 42 tests: verdict-branching, behavioral filters, Graph, Arc, World ID, history
-├── main.py                  # Interactive CLI entry point (rules + LLM pipeline, no API server needed)
-├── config.env                # Template — copy to .env
+│       ├── services/          # auth, entitlements, Arc, World ID, history, SSE analysis APIs
+│       └── components/        # scanner, account/ledger, pricing, passkey, World ID, subscription UI
+├── tests/                     # Engine + Graph + Arc + World ID + auth/entitlement/API regressions
 ├── docs/
-│   ├── PRIOR_STATE.md        # Stable record of what existed before ETHOnline 2026
-│   └── architecture.svg      # System architecture diagram
+│   ├── PRIOR_STATE.md         # Stable pre-hackathon state
+│   └── diagrams/
+│       ├── architecture.svg   # Full product architecture
+│       └── architecture-arc.svg # Circle/Arc payment + entitlement flow
+├── main.py                    # Secondary local/CLI entry point
+├── config.env                 # Backend environment template
 └── requirements.txt
 ```
+
+The critical security boundary is the backend: possessing or typing a wallet address is not authentication. RiskSearcher creates a short-lived challenge, verifies the Circle smart-account signature, issues a session, and then checks/reserves scan entitlement server-side before analysis begins.
 
 ---
 
@@ -211,45 +241,81 @@ Shrimp and Dolphin are near-identical in raw transfer *count* but completely dif
 
 ---
 
-## 9. Security note
+## 9. AI-assisted development
+
+AI coding tools were used during development for implementation assistance, debugging, documentation, and code review. Architecture, integration decisions, product design, testing, and final implementation decisions were directed and validated by the project author.
+
+---
+
+## 10. Security note
 
 Keep secrets and provider keys in local environment files only; do not commit them to source control. Full contract source is sent to configured LLM providers as part of specialist/judge prompts — review your provider's data-handling terms if that matters for your use case.
 
 ---
 
-## 10. ETHOnline 2026 — Track Submissions
+## 11. ETHOnline 2026 — Track Submissions
 
-RiskSearcher is submitted in the **Continuity pool** (extending the pre-existing repo documented in [`PRIOR_STATE.md`](./docs/PRIOR_STATE.md)) for two tracks. Both integrations are implemented as load-bearing product paths rather than qualification-only stubs.
+RiskSearcher is submitted in the **Continuity pool** (extending the pre-existing repo documented in [`docs/PRIOR_STATE.md`](./docs/PRIOR_STATE.md)) for three tracks. All three integrations are live, tested, and load-bearing — not stubs added for qualification.
 
-### 10.1 The Graph — Best AI Tooling or AI Use Case (Continuity)
+### 11.1 The Graph — Best AI Tooling or AI Use Case (Continuity)
 
 RiskSearcher is a **risk monitor** (the track's own example category — *"research assistants, trading and execution agents, portfolio copilots, risk monitors"*), not a tooling submission, so the reusable-infrastructure bar applies to the tooling half of the track, not to this.
 
 - **Live data, not mocked:** [`rpc/graph_provider.py`](./rpc/graph_provider.py) queries The Graph's Gateway for the Uniswap V3 Ethereum-mainnet subgraph — real total liquidity, pool count, first-swap timestamp, and 24h/7d swap volume, via a Subgraph Studio API key.
 - **Load-bearing use:** this evidence is injected directly into the LLM specialist's prompt ([`core/analyzer.py`](./core/analyzer.py)), which is explicitly instructed to reason about thin/new liquidity and volume-to-liquidity mismatches as legitimacy signals — not just display raw numbers.
-- **Honest degradation:** if `token.poolCount` and the merged pool query ever disagree (observed once against live Dai data — TVL populated, pool-level fields empty), the pool-level fields are marked `pools_data_reliable: false` and shown as unavailable rather than a misleading confirmed zero — never presented to the specialist or the report as a false signal.
+- **Defensive data handling:** pool enumeration now returns the expected pool data for tested tokens. `pools_data_reliable` remains as a guardrail for future upstream/API inconsistencies: if liquidity is present but pool-level data is internally inconsistent, RiskSearcher marks those fields unavailable instead of turning missing data into a misleading confirmed zero.
 - **Visible in the product**, not just the backend: a "Live Liquidity — The Graph" panel renders real TVL, pool count, pool age, and swap volume directly in the scan report UI.
 
-### 10.2 Circle Arc — Treasury / FX Track
+### 11.2 Circle Arc — Treasury / FX Track
 
-- **Real treasury, not a mock balance:** each authenticated passkey identity maps to an actual Circle Developer-Controlled Wallet on Arc, created/resolved via [`rpc/arc_provider.py`](./rpc/arc_provider.py). Receive/faucet, direct Arc sends, and scan-pack payments use real Arc Testnet wallet state. Fiat on-ramp and off-ramp are explicitly marked **Coming soon** and are not simulated.
-- **Deployment-ready on Arc mainnet:** every blockchain reference is controlled by one `ARC_BLOCKCHAIN` environment variable (defaults to `ARC-TESTNET`) — switching to mainnet is a config change, not a code change, verified by a test that flips the variable and confirms it reaches wallet creation, lookup, *and* transfers.
-- **Resilient to Render's ephemeral disk:** wallet identity is keyed by Circle's own `ref_id` index, not just a local cache file — confirmed live: a redeploy that wiped the local cache still resolved the same user back to their same real wallet instead of silently minting a new, empty one.
-- **Server-authoritative testnet access:** World ID verification grants exactly **3 free scans** once per verified human. A confirmed **$5 testnet USDC** payment grants **10 paid scan credits**. Pricing and credit quantities are backend constants; the browser cannot grant itself scans.
+- **Passkey identity:** [`interface/src/services/passkeyWallet.ts`](./interface/src/services/passkeyWallet.ts) uses Circle **Modular Wallets** to create/recover a WebAuthn-secured ERC-4337 smart account. The backend then challenges that account and verifies its ERC-6492/ERC-1271 signature before creating a RiskSearcher session. The wallet address is never trusted merely because the browser supplied it.
+- **Real Arc treasury wallet:** [`rpc/arc_provider.py`](./rpc/arc_provider.py) creates/resolves a Circle **Developer-Controlled Wallet** on Arc, keyed by Circle `ref_id` to the authenticated passkey address. The account view reads the live USDC balance; there is no seeded `$50` or demo balance.
+- **Real paid scan pack:** the current testnet plan is **$5 USDC for 10 scans**. `/arc/subscribe` initiates the real transfer to `ARC_TREASURY_ADDRESS`; the backend persists the Circle transaction and grants the 10 credits only after Circle reports a confirmed payment state. A frontend success callback cannot manufacture entitlement.
+- **Server-enforced consumption:** [`db/entitlement_store.py`](./db/entitlement_store.py) owns free and paid credits. `/analyze` atomically reserves a credit before work begins; a failed analysis refunds it. This prevents direct-API bypasses, re-analysis bypasses, concurrent double-spend and refresh-based credit resets.
+- **No fake fiat rails:** on-ramp and off-ramp are visibly **Coming Soon**. Testnet users are directed to the faucet to fund the real Arc wallet instead of seeing simulated deposits or withdrawals.
+- **Real account activity:** the Ledger Activity view is generated from the authenticated user's persisted service-credit/payment activity and real wallet state, not seeded mock transactions.
+- **Redeploy-resilient wallet mapping:** Circle's `ref_id` index is the source of truth, so Render's ephemeral filesystem does not silently create a new wallet after a restart.
+- **Mainnet-ready network plumbing:** `ARC_BLOCKCHAIN=ARC-TESTNET` can switch to `ARC`; wallet creation, lookup and transfers all use the same network setting and network-scoped cache keys.
+- **Why USDC:** the product sells a dollar-denominated scan pack, so a stable asset keeps the displayed price and paid price aligned. On Arc, USDC also serves as the native gas asset, avoiding a separate gas-token balance for the testnet payment flow.
+- **What “subscription” means here:** it is a manual scan-pack purchase, not scheduled recurring billing. Each confirmed $5 payment adds 10 scan credits; RiskSearcher never implies an automatic future charge.
 
-### 10.3 What each track's evidence looks like end-to-end
+### 11.3 World — Selfie Check (Sybil-Resistant Free Trial)
+
+RiskSearcher gates its free trial (3 scans) behind [World ID Selfie Check](https://docs.world.org/world-id/credentials/11), using it exactly as the track intends — as an abuse-prevention signal, not a decorative badge.
+
+- **Real server-side verification, not client-trusted state:** [`rpc/world_id_provider.py`](./rpc/world_id_provider.py) calls World's actual verify endpoint (`POST /api/v4/verify/{rp_id}`) with the complete IDKit proof; the frontend's own "success" state is never trusted on its own.
+- **The actual Sybil-defense mechanism:** [`db/world_id_store.py`](./db/world_id_store.py) keys the trial-claim ledger on the World ID **nullifier** — a stable per-human identifier — not on wallet address, using Firestore's atomic document-create as the claim mechanism. A verified human cannot reconnect a fresh wallet to claim a second trial; confirmed live, the app correctly surfaces *"This World ID has already claimed a free trial with 0x71c8...4337"* on a repeat attempt from a different device.
+- **RP-signature generation, verified byte-for-byte:** World ID 4.0 requires every request to carry a signed `rp_context`. The official `@worldcoin/idkit-server` package refuses to run outside genuine Node.js (confirmed the hard way — it hung indefinitely on Vercel's Edge runtime, then explicitly rejected running there once the runtime mismatch was fixed), so signing was ported to Python instead and checked byte-for-byte against the real JS source's message construction, hashing, and a self-consistent sign/recover round-trip before being trusted.
+- **Cross-device session restoration:** verification is bound to a human, not a browser — [`db/world_id_store.py`](./db/world_id_store.py)'s `get_claim_status_by_wallet_address()` lets a returning user's *other* device recognize an existing verification via wallet address, not just a locally-cached nullifier from the device that originally verified.
+
+### 11.4 What each track's evidence looks like end-to-end
 
 | Requirement | Where to see it |
 |---|---|
 | Graph: live data feeding real reasoning | Run a scan (`main.py` or the deployed app) on a token with a Uniswap V3 pool — see the "Live Liquidity" section of the report and the specialist's reasoning about it |
-| Graph: honest degradation | `tests/test_graph_provider.py::test_nonzero_tvl_with_zero_pools_is_marked_unreliable` |
-| Arc: real transfer + scan-pack payment | `POST /arc/send` performs a real Arc Testnet wallet transfer; `POST /arc/subscribe` starts the fixed $5 payment and `/arc/subscription-status` grants 10 scans only after Circle confirmation |
+| Graph: defensive reliability guard | `tests/test_graph_provider.py::test_nonzero_tvl_with_zero_pools_is_marked_unreliable` |
+| Arc: real paid access | Purchase the $5 scan pack in the app / call `/arc/subscribe` while authenticated — a confirmed Circle transaction grants 10 server-side scan credits |
 | Arc: mainnet-ready | `tests/test_arc_provider.py::test_arc_blockchain_env_var_switches_network_end_to_end` |
 | Arc: redeploy-resilient identity | `tests/test_arc_provider.py::test_finds_existing_wallet_via_ref_id_after_cache_loss` |
+| World: one-trial-per-human enforced | `tests/test_world_id_store.py::test_status_by_wallet_address_finds_an_existing_claim` |
+| World: cross-device status lookup | `tests/test_api_world_id_endpoint.py::test_status_falls_back_to_address_when_no_nullifier` |
 
+### 11.5 Path to Mainnet & Forward Roadmap
 
-### 10.4 Access-control boundary
+Everything above this line is implemented and tested today. This section is explicitly the opposite — plans, not claims — kept separate so it's never mistaken for current capability.
 
-The web UI is not the authorization layer. Passkey smart accounts sign a short-lived backend challenge, which creates an opaque session. `/analyze`, wallet, ledger, history, World ID claim, and payment endpoints derive the user wallet from that session rather than trusting a caller-supplied address. `/analyze` atomically reserves one Firestore credit before work begins; failed analyses refund the reservation, and successful analyses commit it to the per-user service ledger.
+**Mainnet launch is planned as a small bootstrap, not a large external fundraising dependency.** The Arc network switch itself is already configuration-driven (`ARC_BLOCKCHAIN=ARC`, §11.2). Before enabling real-value payments, I plan to cover the modest launch costs with **personal bootstrapping and/or hackathon prize winnings**: a production domain, paid backend/API capacity, and the basic legal/operational setup appropriate for handling real user funds.
 
-Also live in this submission, not yet reflected in the architecture diagram above: real, per-address **scan history** persisted in Firestore (`db/scan_history_store.py`), so a returning user sees their own past scans instead of a session-only list. This isn't a track requirement for Graph or Arc — it's a product gap that came up during testing and was worth fixing regardless.
+The point is not “RiskSearcher needs major funding before it can work.” The product already works on Arc Testnet. The remaining spend is normal launch hardening before moving a financial flow from test assets to real USDC.
+
+**Planned architecture change — unifying identity and treasury:** on mainnet, the two-address split described in §11.2 (a passkey identity address, separate from a backend-managed DCW treasury address linked by `ref_id`) is planned to collapse into one. Whichever login method a user chooses — passkey, social login, or a connected external wallet — its resulting address becomes their transactional wallet directly, with no separate backend-created account to reconcile. This is planned specifically for compliance clarity (one address, one identity, one audit trail) and a simpler launch surface, not because the current two-address design is broken — it works and is tested (§11.2) — but a unified model is the right long-term shape for a mainnet financial product.
+
+**Planned login expansion:** passkeys (implemented today) plus social login and external wallet-connect as additional, equally-first-class options — not passkey-only.
+
+**Planned analysis expansion beyond EVM:** chain support for the actual risk analysis is planned to grow progressively beyond EVM chains, not just add more EVM networks to the existing list.
+
+Also live in this submission: authenticated per-user **scan history**, **scan entitlements**, and **Ledger Activity** persisted in Firestore. Returning users recover the account state that matters instead of getting a fresh mock/session-only account after every browser refresh.
+
+## Contact
+
+LinkedIn: [Therock Ani](https://www.linkedin.com/in/therock-ani-13336224b/)
