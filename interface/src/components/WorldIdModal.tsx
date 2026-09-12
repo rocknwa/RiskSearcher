@@ -1,43 +1,96 @@
 import React, { useState } from 'react';
+import { IDKitRequestWidget, selfieCheckLegacy, type RpContext } from '@worldcoin/idkit';
+import { getRpSignature, verifyWorldId } from '../services/worldIdApi';
 
 interface WorldIdModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onVerifySuccess: () => void;
+  onVerifySuccess: (scansGranted: number, nullifier: string) => void;
+  onAlreadyClaimed: (walletAddress: string) => void;
   isAlreadyVerified: boolean;
+  walletAddress: string;
 }
+
+// World's Developer Portal app_id for this app - public, safe to expose
+// client-side (unlike the RP signing_key, which never leaves the server).
+const WORLD_APP_ID = import.meta.env.VITE_WORLD_APP_ID as string | undefined;
+const WORLD_ACTION = 'verify-humanity-trial';
 
 export const WorldIdModal: React.FC<WorldIdModalProps> = ({
   isOpen,
   onClose,
   onVerifySuccess,
+  onAlreadyClaimed,
   isAlreadyVerified,
+  walletAddress,
 }) => {
-  const [verificationState, setVerificationState] = useState<'idle' | 'verifying' | 'success' | 'failed'>('idle');
+  const [widgetOpen, setWidgetOpen] = useState(false);
+  const [rpContext, setRpContext] = useState<RpContext | null>(null);
+  const [verificationState, setVerificationState] = useState<'idle' | 'fetching_rp_context' | 'verifying' | 'success' | 'failed'>('idle');
   const [errorMessage, setErrorMessage] = useState('');
 
   if (!isOpen) return null;
 
-  const handleStartVerification = () => {
-    setVerificationState('verifying');
+  const handleStartVerification = async () => {
     setErrorMessage('');
-    
-    // Simulate World ID Zero-Knowledge Proof generation
-    setTimeout(() => {
-      // 95% chance success simulation
-      const success = true;
-      if (success) {
-        setVerificationState('success');
-        setTimeout(() => {
-          onVerifySuccess();
-          onClose();
-          setVerificationState('idle');
-        }, 1200);
-      } else {
-        setVerificationState('failed');
-        setErrorMessage('Proof verification timed out. Please retry.');
+    if (!WORLD_APP_ID) {
+      setVerificationState('failed');
+      setErrorMessage('World ID is not configured (missing VITE_WORLD_APP_ID). Contact support.');
+      return;
+    }
+    setVerificationState('fetching_rp_context');
+    try {
+      // World ID 4.0 requires every request - Selfie Check included - to
+      // carry an rp_context signed server-side. Calls the Vercel
+      // serverless function at /api/world-id-rp-signature (ships
+      // alongside this frontend) - see that file and
+      // rpc/world_id_provider.py for the full explanation.
+      const rpSig = await getRpSignature(WORLD_ACTION);
+      setRpContext({
+        rp_id: rpSig.rp_id,
+        nonce: rpSig.nonce,
+        created_at: rpSig.created_at,
+        expires_at: rpSig.expires_at,
+        signature: rpSig.sig,
+      });
+      setWidgetOpen(true);
+      setVerificationState('idle');
+    } catch (error) {
+      setVerificationState('failed');
+      setErrorMessage(error instanceof Error ? error.message : 'Could not start World ID verification.');
+    }
+  };
+
+  // IDKit calls this with the raw, unverified result the moment the user
+  // completes Selfie Check in World App. Client-side "success" here means
+  // nothing on its own - the proof's cryptographic validity has NOT been
+  // checked yet. handleVerify is IDKit's designated hook for exactly that:
+  // it must call the backend and throw/reject if verification fails,
+  // which tells IDKit to show a failure state instead of completing.
+  const handleVerify = async (result: unknown) => {
+    setVerificationState('verifying');
+    const claim = await verifyWorldId(walletAddress, result);
+    if (claim.no_data) {
+      throw new Error('World ID verification service is currently unavailable.');
+    }
+    if (!claim.claimed) {
+      // Real proof, but this human already claimed a trial - possibly
+      // with a different wallet. Not an error in the proof itself, so
+      // don't show it as a failure - hand it to the parent to explain.
+      if (claim.reason === 'already_claimed') {
+        onAlreadyClaimed(claim.wallet_address || '');
+        onClose();
+        return;
       }
-    }, 1400);
+      throw new Error(claim.reason || 'Trial claim was rejected.');
+    }
+    setVerificationState('success');
+    setTimeout(() => {
+      onVerifySuccess(claim.scans_granted ?? 15, claim.nullifier || '');
+      onClose();
+      setVerificationState('idle');
+      setWidgetOpen(false);
+    }, 1200);
   };
 
   return (
@@ -52,7 +105,7 @@ export const WorldIdModal: React.FC<WorldIdModalProps> = ({
             <div>
               <h3 className="font-semibold text-base text-[#dae2fd]">Verify your humanity</h3>
               <span className="font-mono text-[10px] text-[#4edea3] uppercase font-bold tracking-wider">
-                Zero-Knowledge Sybil Defense
+                World ID Selfie Check
               </span>
             </div>
           </div>
@@ -67,14 +120,14 @@ export const WorldIdModal: React.FC<WorldIdModalProps> = ({
         {/* Informational Copy */}
         <div className="space-y-2">
           <p className="text-xs sm:text-sm text-[#c2c6d6] leading-relaxed">
-            Verify with <strong className="text-[#dae2fd]">World ID</strong> to unlock your free RiskSearcher trial.
+            Verify with <strong className="text-[#dae2fd]">World ID Selfie Check</strong> to unlock your free RiskSearcher trial.
           </p>
           <div className="bg-[#060e20] p-3 rounded-xl border border-[#222a3d] space-y-1">
             <span className="font-mono text-[11px] text-[#8c909f] block uppercase font-semibold">
               Why is this required?
             </span>
             <p className="text-xs text-[#c2c6d6] leading-relaxed">
-              This helps prevent Sybil abuse and keeps free access fair for everyone. World ID verifies unique humanness without revealing your identity or wallet keys.
+              This helps prevent Sybil abuse and keeps free access fair for everyone. The trial is bound to your unique World ID, not your wallet - it cannot be reclaimed with a new wallet address.
             </p>
           </div>
         </div>
@@ -90,15 +143,20 @@ export const WorldIdModal: React.FC<WorldIdModalProps> = ({
               </span>
             ) : verificationState === 'idle' ? (
               <span className="text-[#8c909f]">Not verified</span>
+            ) : verificationState === 'fetching_rp_context' ? (
+              <span className="text-[#4cd7f6] font-bold flex items-center gap-1">
+                <span className="material-symbols-outlined animate-spin text-[14px]">sync</span>
+                <span>Preparing request...</span>
+              </span>
             ) : verificationState === 'verifying' ? (
               <span className="text-[#4cd7f6] font-bold flex items-center gap-1">
                 <span className="material-symbols-outlined animate-spin text-[14px]">sync</span>
-                <span>Generating zk-Proof...</span>
+                <span>Verifying proof...</span>
               </span>
             ) : verificationState === 'success' ? (
               <span className="text-[#4edea3] font-bold flex items-center gap-1">
                 <span className="material-symbols-outlined text-[14px]">verified</span>
-                <span>Verified ✓ (15 Scans Unlocked)</span>
+                <span>Verified ✓</span>
               </span>
             ) : (
               <span className="text-[#ffb4ab] font-bold">Verification failed</span>
@@ -120,17 +178,17 @@ export const WorldIdModal: React.FC<WorldIdModalProps> = ({
                 <span>Humanity verified ✓</span>
               </div>
               <p className="text-xs text-[#c2c6d6]">
-                Your free trial is now unlocked with 15 scans remaining.
+                Your free trial is now unlocked with scans remaining.
               </p>
             </div>
           ) : (
             <button
               type="button"
-              disabled={verificationState === 'verifying' || isAlreadyVerified}
+              disabled={verificationState === 'fetching_rp_context' || verificationState === 'verifying' || isAlreadyVerified}
               onClick={handleStartVerification}
-              className="w-full py-3 bg-[#4edea3] hover:bg-[#6ffbbe] text-[#003824] font-bold text-sm rounded-xl transition-all shadow-md flex items-center justify-center gap-2 active:scale-[0.99]"
+              className="w-full py-3 bg-[#4edea3] hover:bg-[#6ffbbe] text-[#003824] font-bold text-sm rounded-xl transition-all shadow-md flex items-center justify-center gap-2 active:scale-[0.99] disabled:opacity-60"
             >
-              {verificationState === 'verifying' ? (
+              {verificationState === 'fetching_rp_context' || verificationState === 'verifying' ? (
                 <>
                   <span className="material-symbols-outlined animate-spin text-[18px]">sync</span>
                   <span>Verifying with World ID...</span>
@@ -138,7 +196,7 @@ export const WorldIdModal: React.FC<WorldIdModalProps> = ({
               ) : isAlreadyVerified ? (
                 <>
                   <span className="material-symbols-outlined text-[18px]">verified</span>
-                  <span>Already Verified (15 Scans Active)</span>
+                  <span>Already Verified</span>
                 </>
               ) : (
                 <>
@@ -161,6 +219,25 @@ export const WorldIdModal: React.FC<WorldIdModalProps> = ({
           </p>
         </div>
       </div>
+
+      {WORLD_APP_ID && rpContext && (
+        <IDKitRequestWidget
+          open={widgetOpen}
+          onOpenChange={setWidgetOpen}
+          app_id={WORLD_APP_ID as `app_${string}`}
+          action={WORLD_ACTION}
+          rp_context={rpContext}
+          allow_legacy_proofs
+          preset={selfieCheckLegacy({ signal: walletAddress })}
+          handleVerify={handleVerify}
+          onSuccess={() => undefined}
+          onError={(errorCode) => {
+            setVerificationState('failed');
+            setErrorMessage(`World ID verification was not completed (${errorCode}).`);
+            setWidgetOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 };

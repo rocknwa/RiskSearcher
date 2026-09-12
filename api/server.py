@@ -211,6 +211,26 @@ class WorldIdVerifyRequest(BaseModel):
     idkit_result: dict  # complete result IDKit's onSuccess/handleVerify received
 
 
+@app.post("/world-id/rp-signature")
+def world_id_rp_signature_endpoint(payload: dict = Body(...)):
+    """Server-signed rp_context for an IDKit request. World ID 4.0 requires
+    every request (Selfie Check included) to carry this. Signing lives here
+    in the Python backend (not a Vercel serverless function) because the
+    official @worldcoin/idkit-server package refuses to run outside real
+    Node.js - see rpc/world_id_provider.py's module docstring for the full
+    story and how this Python port was verified against it."""
+    action = payload.get("action", "verify-humanity")
+    signing_key = os.environ.get("WORLD_ID_RP_SIGNING_KEY", "").strip()
+    rp_id = os.environ.get("WORLD_ID_RP_ID", "").strip()
+    if not signing_key or not rp_id:
+        raise HTTPException(status_code=503, detail="World ID RP signing is not configured (WORLD_ID_RP_SIGNING_KEY / WORLD_ID_RP_ID).")
+    try:
+        signed = world_id_provider.generate_rp_signature(signing_key, action)
+    except world_id_provider.WorldIdError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    return {"rp_id": rp_id, **signed}
+
+
 @app.post("/world-id/verify")
 def world_id_verify_endpoint(payload: WorldIdVerifyRequest = Body(...)):
     """Verify a completed Selfie Check proof server-side - never trust the
@@ -235,12 +255,20 @@ def world_id_verify_endpoint(payload: WorldIdVerifyRequest = Body(...)):
 
 
 @app.get("/world-id/status")
-def world_id_status_endpoint(nullifier: str = Query(..., description="World ID nullifier for this human")):
-    """Check whether this human (by nullifier) already claimed their
-    trial, without claiming it. Called on app load with a nullifier the
-    frontend stored locally after a successful verify, so returning users
-    don't need to redo Selfie Check every session."""
-    return world_id_store.get_claim_status(nullifier)
+def world_id_status_endpoint(
+    nullifier: str = Query("", description="World ID nullifier for this human. Provide this OR address."),
+    address: str = Query("", description="Wallet address. Used when no nullifier is cached locally yet - e.g. a device/browser that never itself completed Selfie Check, such as switching from mobile to desktop with the same wallet."),
+):
+    """Check whether this human already claimed their trial, without
+    claiming it. Prefers nullifier (exact, and how the frontend restores
+    state on the device that actually completed Selfie Check); falls back
+    to a wallet-address lookup for a device with no locally-cached
+    nullifier. Either lookup is read-only - neither claims a trial."""
+    if nullifier:
+        return world_id_store.get_claim_status(nullifier)
+    if address:
+        return world_id_store.get_claim_status_by_wallet_address(address)
+    raise HTTPException(status_code=400, detail="Provide either nullifier or address")
 
 
 @app.get("/debug/setup-entity-secret")
