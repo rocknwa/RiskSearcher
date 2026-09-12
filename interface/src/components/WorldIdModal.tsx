@@ -41,9 +41,8 @@ export const WorldIdModal: React.FC<WorldIdModalProps> = ({
     setVerificationState('fetching_rp_context');
     try {
       // World ID 4.0 requires every request - Selfie Check included - to
-      // carry an rp_context signed server-side. Calls the Vercel
-      // serverless function at /api/world-id-rp-signature (ships
-      // alongside this frontend) - see that file and
+      // carry an rp_context signed server-side. Calls the Python backend's
+      // /world-id/rp-signature endpoint - see services/worldIdApi.ts and
       // rpc/world_id_provider.py for the full explanation.
       const rpSig = await getRpSignature(WORLD_ACTION);
       setRpContext({

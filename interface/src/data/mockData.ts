@@ -8,7 +8,7 @@ export const INITIAL_USER_ACCOUNT: UserAccountState = {
   isWorldIdVerified: false,
   freeScansRemaining: 0,
   totalFreeScans: 15,
-  apiKey: 'rk_live_9f829f041b6c72e482aa0019ff4',
+  apiKey: 'rk_demo_9f829f041b6c72e482aa0019ff4',
   isApiKeyVisible: false,
   
   // Balance A: User wallet USDC (Money belonging to the user)
