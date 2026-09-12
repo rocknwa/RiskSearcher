@@ -38,7 +38,7 @@ FARTPEPE is the hard case worth calling out explicitly: it's the one contract wh
 
 ## Prior state of the project
 
-See [`PRIOR_STATE.md`](./PRIOR_STATE.md) for a full, stable record of what this project was before ETHOnline 2026 — kept separate so it doesn't get lost or reworded as this README evolves to describe the final submitted product.
+See [`PRIOR_STATE.md`](./docs/PRIOR_STATE.md) for a full, stable record of what this project was before ETHOnline 2026 — kept separate so it doesn't get lost or reworded as this README evolves to describe the final submitted product.
 
 ## 3. What RiskSearcher does
 
@@ -148,7 +148,7 @@ See [`REPRODUCTION.md`](./REPRODUCTION.md) for the complete reproduction guide, 
 
 ## 6. Architecture
 
-![RiskSearcher system architecture — frontend, backend, analysis pipeline, The Graph, Circle Arc, and Firestore](architecture.svg)
+![RiskSearcher system architecture — frontend, backend, analysis pipeline, The Graph, Circle Arc, and Firestore](docs/architecture.svg)
 
 ```text
 RiskSearcher/
@@ -162,24 +162,27 @@ RiskSearcher/
 ├── rpc/
 │   ├── provider.py         # Etherscan V2 + Alchemy multi-chain source/bytecode/transfer fetches
 │   ├── graph_provider.py   # The Graph Gateway — live Uniswap V3 liquidity evidence (ETHOnline 2026)
-│   └── arc_provider.py     # Circle Developer-Controlled Wallets on Arc — treasury ops (ETHOnline 2026)
+│   ├── arc_provider.py     # Circle Developer-Controlled Wallets on Arc — treasury ops (ETHOnline 2026)
+│   └── world_id_provider.py  # World ID Selfie Check RP-signature + verify (ETHOnline 2026)
 ├── llm/
 │   └── client.py           # Tiered specialist + judge client (Anthropic -> OpenRouter -> Groq -> AgentRouter)
 ├── db/
 │   ├── vector_store.py     # FAISS similarity search against scam patterns (contamination-guarded writes)
 │   ├── scan_history_store.py  # Firestore-backed per-address scan history (ETHOnline 2026)
+│   ├── world_id_store.py   # Nullifier-keyed free-trial claim ledger (ETHOnline 2026)
 │   └── patterns.json       # Seeded scam-pattern corpus
 ├── interface/               # React + Vite frontend (deployed on Vercel)
 │   └── src/
-│       ├── services/        # riskSearcherApi.ts (SSE), arcApi.ts, historyApi.ts
-│       └── components/      # ScannerView, AccountsView, AddFundsModal, SubscriptionModal, etc.
+│       ├── services/        # riskSearcherApi.ts (SSE), arcApi.ts, worldIdApi.ts, passkeyWallet.ts, historyApi.ts
+│       └── components/      # ScannerView, AccountsView, ConnectWalletModal, WorldIdModal, SubscriptionModal, etc.
 ├── scripts/
 │   └── run_ground_truth.py  # Runs the full ground-truth set end-to-end
-├── tests/                   # 42 tests: verdict-branching, behavioral filters, Graph, Arc, history
+├── tests/                   # 42 tests: verdict-branching, behavioral filters, Graph, Arc, World ID, history
 ├── main.py                  # Interactive CLI entry point (rules + LLM pipeline, no API server needed)
 ├── config.env                # Template — copy to .env
-├── PRIOR_STATE.md            # Stable record of what existed before ETHOnline 2026
-├── REPRODUCTION.md           # Step-by-step reproduction guide
+├── docs/
+│   ├── PRIOR_STATE.md        # Stable record of what existed before ETHOnline 2026
+│   └── architecture.svg      # System architecture diagram
 └── requirements.txt
 ```
 
@@ -216,7 +219,7 @@ Keep secrets and provider keys in local environment files only; do not commit th
 
 ## 10. ETHOnline 2026 — Track Submissions
 
-RiskSearcher is submitted in the **Continuity pool** (extending the pre-existing repo documented in [`PRIOR_STATE.md`](./PRIOR_STATE.md)) for two tracks. Both integrations are live, tested, and load-bearing — not stubs added for qualification.
+RiskSearcher is submitted in the **Continuity pool** (extending the pre-existing repo documented in [`PRIOR_STATE.md`](./docs/PRIOR_STATE.md)) for two tracks. Both integrations are live, tested, and load-bearing — not stubs added for qualification.
 
 ### 10.1 The Graph — Best AI Tooling or AI Use Case (Continuity)
 
