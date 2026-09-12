@@ -1,9 +1,16 @@
 import React, { useState } from 'react';
+import { createPasskeyWallet, signInWithPasskey, getStoredUsername } from '../services/passkeyWallet';
+
+export interface WalletConnection {
+  address: string;
+  accountType: 'ERC-4337' | 'EOA';
+  ensOrAlias: string;
+}
 
 interface ConnectWalletModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onConnect: (walletName: string) => void;
+  onConnect: (walletName: string, connection: WalletConnection) => void;
   isWalletConnected?: boolean;
   currentWalletName?: string;
   onDisconnect?: () => void;
@@ -19,17 +26,46 @@ export const ConnectWalletModal: React.FC<ConnectWalletModalProps> = ({
   onDisconnect,
   modalPrompt,
 }) => {
-  const [connectingWallet, setConnectingWallet] = useState<string | null>(null);
+  const storedUsername = getStoredUsername();
+  const [mode, setMode] = useState<'signin' | 'register'>(storedUsername ? 'signin' : 'register');
+  const [username, setUsername] = useState<string>(storedUsername || '');
+  const [isConnecting, setIsConnecting] = useState<boolean>(false);
+  const [errorMessage, setErrorMessage] = useState<string>('');
 
   if (!isOpen) return null;
 
-  const handleSelectWallet = (name: string) => {
-    setConnectingWallet(name);
-    setTimeout(() => {
-      setConnectingWallet(null);
-      onConnect(name);
+  /**
+   * The real flow — no setTimeout, no hardcoded address. This triggers
+   * the browser's actual passkey prompt (Face ID / Touch ID / Windows
+   * Hello / security key) and reads back a real Arc Testnet smart-
+   * account address derived from that passkey. See
+   * services/passkeyWallet.ts for the Circle Modular Wallets SDK calls
+   * behind each of these.
+   */
+  const handlePasskeyAuth = async () => {
+    const trimmed = username.trim();
+    if (!trimmed) {
+      setErrorMessage('Enter a name for this passkey (only used to label it on your device).');
+      return;
+    }
+    setErrorMessage('');
+    setIsConnecting(true);
+    try {
+      const result = mode === 'register'
+        ? await createPasskeyWallet(trimmed)
+        : await signInWithPasskey(trimmed);
+
+      onConnect('Passkey Smart Account', {
+        address: result.address,
+        accountType: 'ERC-4337',
+        ensOrAlias: `${result.username}.passkey.arc`,
+      });
       onClose();
-    }, 600);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Passkey authentication failed. Please try again.');
+    } finally {
+      setIsConnecting(false);
+    }
   };
 
   return (
@@ -96,50 +132,83 @@ export const ConnectWalletModal: React.FC<ConnectWalletModalProps> = ({
           </div>
         )}
 
-        {/* Section 1: Social & Passkey Smart Account */}
-        <div className="space-y-2">
-          <span className="font-mono text-[11px] text-[#4edea3] uppercase font-bold tracking-wider block">
-            Instant Smart Wallet (ERC-4337 Gasless)
-          </span>
-          <div className="grid grid-cols-3 gap-2">
-            <button
-              type="button"
-              disabled={connectingWallet !== null}
-              onClick={() => handleSelectWallet('Google Smart Account')}
-              className="p-3 bg-[#060e20] hover:bg-[#171f33] border border-[#222a3d] hover:border-[#4edea3]/50 rounded-xl flex flex-col items-center justify-center gap-1.5 transition-colors group"
-            >
-              <span className="text-xl">🌐</span>
-              <span className="font-mono text-[11px] text-[#dae2fd] group-hover:text-[#4edea3]">Google</span>
-            </button>
-            <button
-              type="button"
-              disabled={connectingWallet !== null}
-              onClick={() => handleSelectWallet('Apple Smart Account')}
-              className="p-3 bg-[#060e20] hover:bg-[#171f33] border border-[#222a3d] hover:border-[#4edea3]/50 rounded-xl flex flex-col items-center justify-center gap-1.5 transition-colors group"
-            >
-              <span className="text-xl">🍏</span>
-              <span className="font-mono text-[11px] text-[#dae2fd] group-hover:text-[#4edea3]">Apple</span>
-            </button>
-            <button
-              type="button"
-              disabled={connectingWallet !== null}
-              onClick={() => handleSelectWallet('Passkey Smart Account')}
-              className="p-3 bg-[#060e20] hover:bg-[#171f33] border border-[#222a3d] hover:border-[#4edea3]/50 rounded-xl flex flex-col items-center justify-center gap-1.5 transition-colors group"
-            >
-              <span className="text-xl">🔑</span>
-              <span className="font-mono text-[11px] text-[#dae2fd] group-hover:text-[#4edea3]">Passkey</span>
-            </button>
-          </div>
-        </div>
+        {!isWalletConnected && (
+          <div className="space-y-3">
+            <span className="font-mono text-[11px] text-[#4edea3] uppercase font-bold tracking-wider block">
+              Instant Smart Wallet (ERC-4337 Gasless, Arc Testnet)
+            </span>
 
-        {/* Section 2: Connect Existing EVM Wallet */}
+            <div className="bg-[#060e20] border border-[#222a3d] rounded-xl p-4 space-y-3">
+              <label className="block">
+                <span className="font-mono text-[10px] text-[#8c909f] uppercase font-bold block mb-1.5">
+                  {mode === 'register' ? 'Name this passkey' : 'Passkey username'}
+                </span>
+                <input
+                  type="text"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="e.g. your name or email"
+                  disabled={isConnecting}
+                  className="w-full bg-[#131b2e] border border-[#222a3d] rounded-lg px-3 py-2 text-xs font-mono text-[#dae2fd] placeholder:text-[#565d70] focus:outline-none focus:border-[#4edea3]/50"
+                />
+              </label>
+
+              <button
+                type="button"
+                disabled={isConnecting}
+                onClick={handlePasskeyAuth}
+                className="w-full p-3 bg-[#171f33] hover:bg-[#1b2540] border border-[#4edea3]/40 hover:border-[#4edea3] rounded-xl flex items-center justify-center gap-2 transition-colors group disabled:opacity-50"
+              >
+                {isConnecting ? (
+                  <span className="material-symbols-outlined animate-spin text-[#4edea3] text-[18px]">sync</span>
+                ) : (
+                  <span className="text-lg">🔑</span>
+                )}
+                <span className="font-mono text-xs font-semibold text-[#4edea3]">
+                  {isConnecting
+                    ? 'Waiting for Face ID / Touch ID / Windows Hello…'
+                    : mode === 'register'
+                    ? 'Create Passkey Account'
+                    : 'Sign in with Passkey'}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                disabled={isConnecting}
+                onClick={() => {
+                  setMode(mode === 'register' ? 'signin' : 'register');
+                  setErrorMessage('');
+                }}
+                className="w-full text-center font-mono text-[10px] text-[#8c909f] hover:text-[#4cd7f6] transition-colors"
+              >
+                {mode === 'register' ? 'Already have a passkey? Sign in instead' : "Don't have one yet? Create an account"}
+              </button>
+            </div>
+
+            {errorMessage && (
+              <div className="bg-[#2a1418] border border-[#ffb4ab]/40 rounded-xl p-3 text-xs font-mono text-[#ffb4ab]">
+                {errorMessage}
+              </div>
+            )}
+
+            <span className="font-mono text-[10px] text-[#8c909f] block">
+              Works with Face ID, Touch ID, Windows Hello, Android biometric, or a security key —
+              no app install, no account to remember beyond your device's own passkey manager.
+            </span>
+          </div>
+        )}
+
+        {/* Connect Existing EVM Wallet — not wired up yet; needs a real
+            wallet connector (wagmi/RainbowKit or ConnectKit). Disabled
+            rather than silently mocked. */}
         <div className="space-y-2 pt-1">
           <span className="font-mono text-[11px] text-[#8c909f] uppercase font-bold tracking-wider block">
             Connect Existing Web3 Wallet
           </span>
           <div className="space-y-2">
             {[
-              { name: 'Rabby Smart Account', icon: '🐰', desc: 'Pre-flight gas & transaction simulator', badge: 'Recommended' },
+              { name: 'Rabby Smart Account', icon: '🐰', desc: 'Pre-flight gas & transaction simulator' },
               { name: 'MetaMask', icon: '🦊', desc: 'Popular EVM browser extension' },
               { name: 'Coinbase Wallet', icon: '🔵', desc: 'Self-custodial mobile & web extension' },
               { name: 'WalletConnect', icon: '🔗', desc: 'Connect 100+ mobile wallets via QR code' },
@@ -147,33 +216,24 @@ export const ConnectWalletModal: React.FC<ConnectWalletModalProps> = ({
               <button
                 key={w.name}
                 type="button"
-                disabled={connectingWallet !== null}
-                onClick={() => handleSelectWallet(w.name)}
-                className="w-full flex items-center justify-between p-3 bg-[#060e20] hover:bg-[#171f33] border border-[#222a3d] hover:border-[#4cd7f6]/50 rounded-xl transition-all text-left group"
+                disabled
+                title="Not wired up yet — needs a real wallet connector (wagmi/RainbowKit or ConnectKit)"
+                className="w-full flex items-center justify-between p-3 bg-[#060e20] border border-[#222a3d] rounded-xl transition-all text-left group opacity-40 cursor-not-allowed"
               >
                 <div className="flex items-center gap-3">
                   <span className="text-xl">{w.icon}</span>
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="font-mono text-xs font-semibold text-[#dae2fd] group-hover:text-[#4cd7f6]">
+                      <span className="font-mono text-xs font-semibold text-[#dae2fd]">
                         {w.name}
                       </span>
-                      {w.badge && (
-                        <span className="text-[9px] font-mono font-bold bg-[#03b5d3]/20 text-[#4cd7f6] px-1.5 py-0.5 rounded">
-                          {w.badge}
-                        </span>
-                      )}
+                      <span className="text-[9px] font-mono font-bold bg-[#8c909f]/20 text-[#8c909f] px-1.5 py-0.5 rounded">
+                        Coming soon
+                      </span>
                     </div>
                     <span className="text-[11px] text-[#8c909f]">{w.desc}</span>
                   </div>
                 </div>
-                {connectingWallet === w.name ? (
-                  <span className="material-symbols-outlined animate-spin text-[#4cd7f6] text-[18px]">sync</span>
-                ) : (
-                  <span className="material-symbols-outlined text-[#8c909f] group-hover:text-[#dae2fd] text-[16px]">
-                    chevron_right
-                  </span>
-                )}
               </button>
             ))}
           </div>
