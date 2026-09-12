@@ -343,24 +343,24 @@ export default function App() {
     setTransactions([newTx, ...transactions]);
   };
 
-  const handleConnectWallet = (walletName: string) => {
+  // walletName is a display label ("Passkey Smart Account", ...); address/
+  // accountType/ensOrAlias come from a REAL connection now — Circle's
+  // Modular Wallets (passkey) flow for the smart-account path (see
+  // ConnectWalletModal.tsx, services/passkeyWallet.ts), or a real EVM
+  // wallet connector for MetaMask/Rabby/Coinbase/WalletConnect once that's
+  // wired up. Nothing here invents or hardcodes an address anymore.
+  const handleConnectWallet = (
+    walletName: string,
+    connection: { address: string; accountType: 'ERC-4337' | 'EOA'; ensOrAlias: string },
+  ) => {
     setIsWalletConnected(true);
-    const isSocialOrSmart = walletName.includes('Google') || walletName.includes('Apple') || walletName.includes('Passkey');
 
     setUserAccount((prev) => ({
       ...prev,
       walletType: walletName,
-      address: isSocialOrSmart
-        ? '0x71C83b9281a182910c2847192839182471924337'
-        : '0x88942b918247192839182910c28419b489289941',
-      ensOrAlias: walletName.includes('Google')
-        ? 'trader.google.id'
-        : walletName.includes('Apple')
-        ? 'trader.apple.id'
-        : walletName.includes('Passkey')
-        ? 'passkey.erc4337'
-        : 'web3trader.eth',
-      accountType: isSocialOrSmart ? 'ERC-4337 Smart Account' : 'EVM EOA Account',
+      address: connection.address,
+      ensOrAlias: connection.ensOrAlias,
+      accountType: connection.accountType,
     }));
 
     // If user attempted a scan before logging in, immediately execute it now!
