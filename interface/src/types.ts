@@ -34,6 +34,17 @@ export interface AnalysisProgressEvent {
   message: string;
 }
 
+export interface EntitlementState {
+  no_data: boolean;
+  reason?: string;
+  wallet_address?: string;
+  world_verified: boolean;
+  free_scans_remaining: number;
+  free_scans_granted: number;
+  paid_scans_remaining: number;
+  total_scans_executed: number;
+}
+
 export interface GraphEvidence {
   source: string;
   token_address: string;
@@ -74,6 +85,7 @@ export interface AnalysisApiResult {
   parameters?: Record<string, unknown>;
   breakdown: string[];
   graph_evidence?: GraphEvidence | null;
+  entitlement?: EntitlementState;
 }
 
 export interface AnalysisStreamHandlers {
@@ -155,7 +167,7 @@ export interface TokenInvestigation {
 
 export interface LedgerTransaction {
   id: string;
-  timestamp: string;
+  timestamp: string | null;
   operation: string;
   typeIcon: string;
   amount: string;
@@ -163,7 +175,7 @@ export interface LedgerTransaction {
   isFree?: boolean;
   category: 'wallet' | 'service';
   txHash: string;
-  settlement: 'Completed' | 'Confirmed' | 'Success' | 'Verified' | 'Broadcasted' | 'Processed' | 'Active';
+  settlement: string;
 }
 
 export interface SubscriptionPlan {
@@ -185,14 +197,15 @@ export interface UserAccountState {
   isWorldIdVerified: boolean;
   freeScansRemaining: number;
   totalFreeScans: number;
+  paidScansRemaining: number;
   apiKey: string;
   isApiKeyVisible: boolean;
   
   // CRITICAL SEPARATION OF BALANCES
-  // Balance A: User wallet USDC (belongs to user, can send/withdraw/buy/receive)
+  // Balance A: live USDC held in the Circle Developer-Controlled Wallet mapped to this authenticated identity
   walletUsdcBalance: number;
   
-  // Balance B: RiskSearcher service credit (prepaid service credit, non-withdrawable, non-transferable)
+  // Legacy numeric service-balance field retained for UI compatibility; scan entitlements are authoritative as counts above
   riskSearcherBalance: number;
   
   totalScansExecuted: number;

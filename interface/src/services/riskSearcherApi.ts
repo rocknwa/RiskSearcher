@@ -1,4 +1,5 @@
 import { AnalysisApiResult, AnalysisProgressEvent, AnalysisStreamHandlers } from '../types';
+import { authHeaders } from './authApi';
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim().replace(/\/$/, '');
 const CONNECTION_TIMEOUT_MS = 90_000;
@@ -54,8 +55,7 @@ function parseSseEvent(block: string): SseEvent | null {
 export function streamContractAnalysis(
   address: string,
   chain: string,
-  handlers: AnalysisStreamHandlers,
-  userAddress?: string,
+  handlers: AnalysisStreamHandlers
 ): () => void {
   if (!apiBaseUrl) {
     window.setTimeout(() => handlers.onError('The analysis service is not configured. Set VITE_API_BASE_URL and reload the app.'), 0);
@@ -65,9 +65,6 @@ export function streamContractAnalysis(
   const url = new URL(`${apiBaseUrl}/analyze`);
   url.searchParams.set('address', address);
   url.searchParams.set('chain', chain);
-  if (userAddress) {
-    url.searchParams.set('user_address', userAddress);
-  }
 
   const controller = new AbortController();
   let cancelled = false;
@@ -131,15 +128,24 @@ export function streamContractAnalysis(
     try {
       const response = await fetch(url, {
         method: 'GET',
-        headers: { Accept: 'text/event-stream' },
+        headers: authHeaders({ Accept: 'text/event-stream' }),
         signal: controller.signal,
       });
       const contentType = response.headers.get('content-type');
       debugStream('response received', { status: response.status, contentType, url: response.url });
 
       if (!response.ok) {
-        const body = await response.text();
-        reportFailure(`The analysis service returned HTTP ${response.status}.`, { body: body.slice(0, 1000), contentType, url: response.url });
+        const bodyText = await response.text();
+        let message = `The analysis service returned HTTP ${response.status}.`;
+        try {
+          const body = JSON.parse(bodyText);
+          const detail = body?.detail;
+          if (typeof detail === 'string') message = detail;
+          else if (detail?.message) message = detail.message;
+        } catch {
+          // Keep HTTP fallback for non-JSON proxy errors.
+        }
+        reportFailure(message, { body: bodyText.slice(0, 1000), contentType, url: response.url });
         return;
       }
       if (!contentType?.toLowerCase().includes('text/event-stream') || !response.body) {

@@ -1,52 +1,72 @@
-import { ArcTransferResult, ArcWallet } from '../types';
+import { ArcTransferResult, ArcWallet, EntitlementState } from '../types';
+import { authFetch } from './authApi';
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim().replace(/\/$/, '');
 
 function requireApiBase(): string {
-  if (!apiBaseUrl) {
-    throw new Error('The Arc treasury service is not configured. Set VITE_API_BASE_URL and reload the app.');
-  }
+  if (!apiBaseUrl) throw new Error('The Arc treasury service is not configured. Set VITE_API_BASE_URL and reload.');
   return apiBaseUrl;
 }
 
-/** Real Arc Testnet deposit address + live USDC balance for this user. Creates the wallet on first call. */
-export async function getArcWallet(address: string): Promise<ArcWallet> {
-  const base = requireApiBase();
-  const url = new URL(`${base}/arc/wallet`);
-  url.searchParams.set('address', address);
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Arc wallet lookup failed (HTTP ${response.status}).`);
-  }
-  return response.json();
-}
-
-/** Real, on-chain USDC transfer out of the user's Arc Testnet wallet. */
-export async function withdrawUsdc(address: string, destination: string, amount: number): Promise<ArcTransferResult> {
-  const base = requireApiBase();
-  const response = await fetch(`${base}/arc/withdraw`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ address, destination, amount }),
-  });
-  const body = await response.json();
-  if (!response.ok) {
-    throw new Error(body?.detail || `Arc withdrawal failed (HTTP ${response.status}).`);
-  }
+export async function getArcWallet(): Promise<ArcWallet> {
+  const response = await authFetch(`${requireApiBase()}/arc/wallet`);
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body?.detail || `Arc wallet lookup failed (HTTP ${response.status}).`);
   return body;
 }
 
-/** Real, on-chain USDC payment from the user's Arc Testnet wallet to the platform treasury. */
-export async function paySubscription(address: string, planPrice: number): Promise<ArcTransferResult> {
-  const base = requireApiBase();
-  const response = await fetch(`${base}/arc/subscribe`, {
+/** Real Arc-Testnet transfer only. This is not a bridge/off-ramp. */
+export async function sendUsdc(destination: string, amount: number): Promise<ArcTransferResult> {
+  const response = await authFetch(`${requireApiBase()}/arc/send`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ address, plan_price: planPrice }),
+    body: JSON.stringify({ destination, amount }),
   });
-  const body = await response.json();
-  if (!response.ok) {
-    throw new Error(body?.detail || `Subscription payment failed (HTTP ${response.status}).`);
-  }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body?.detail || `Arc transfer failed (HTTP ${response.status}).`);
+  return body;
+}
+
+export interface ScanPackPurchaseResult extends ArcTransferResult {
+  price_usdc?: number;
+  scans?: number;
+  credits_granted?: boolean;
+  reused_pending?: boolean;
+  entitlement?: EntitlementState;
+}
+
+export interface ScanPackStatusResult extends ArcTransferResult {
+  tx_hash?: string;
+  credits_granted?: boolean;
+  entitlement?: EntitlementState;
+}
+
+/** Starts the fixed $5 testnet-USDC -> 10 scan-credit purchase. */
+export async function paySubscription(): Promise<ScanPackPurchaseResult> {
+  const response = await authFetch(`${requireApiBase()}/arc/subscribe`, { method: 'POST' });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body?.detail || `Scan-pack payment failed (HTTP ${response.status}).`);
+  return body;
+}
+
+export async function getSubscriptionStatus(transactionId: string): Promise<ScanPackStatusResult> {
+  const url = new URL(`${requireApiBase()}/arc/subscription-status`);
+  url.searchParams.set('transaction_id', transactionId);
+  const response = await authFetch(url);
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body?.detail || `Payment status lookup failed (HTTP ${response.status}).`);
+  return body;
+}
+
+export interface PendingScanPackResult {
+  no_data?: boolean;
+  pending_purchase?: ScanPackStatusResult | null;
+}
+
+/** Resume any outstanding $5 scan-pack payment without submitting a second transfer. */
+export async function getPendingSubscription(): Promise<PendingScanPackResult> {
+  const response = await authFetch(`${requireApiBase()}/arc/pending-subscription`);
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body?.detail || `Pending payment lookup failed (HTTP ${response.status}).`);
   return body;
 }

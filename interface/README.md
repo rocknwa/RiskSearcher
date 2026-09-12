@@ -1,7 +1,7 @@
 # RiskSearcher — Interface
 
 Frontend for RiskSearcher: paste a token address, get a scam-token risk verdict from
-the rules + multi-LLM specialist/judge pipeline. This is the UI layer only — the
+the rules + specialist + judge pipeline. This is the UI layer only — the
 analysis engine lives in the main RiskSearcher backend repo.
 
 ## Run Locally

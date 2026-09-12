@@ -1,26 +1,22 @@
 import { TokenInvestigation, LedgerTransaction, UserAccountState } from '../types';
 
 export const INITIAL_USER_ACCOUNT: UserAccountState = {
-  address: '0x7A8B92e666579979313437D35de4e4b191F2',
-  ensOrAlias: '0x7A8B...91F2',
-  walletType: 'Passkey Smart Wallet (ERC-4337)',
+  address: '',
+  ensOrAlias: '',
+  walletType: 'Passkey Smart Account',
   accountType: 'ERC-4337',
   isWorldIdVerified: false,
   freeScansRemaining: 0,
-  totalFreeScans: 15,
-  apiKey: 'rk_demo_9f829f041b6c72e482aa0019ff4',
+  totalFreeScans: 3,
+  paidScansRemaining: 0,
+  apiKey: '',
   isApiKeyVisible: false,
-  
-  // Balance A: User wallet USDC (Money belonging to the user)
-  walletUsdcBalance: 50.00,
-  
-  // Balance B: RiskSearcher subscription balance (Service credit, non-withdrawable)
-  riskSearcherBalance: 0.00,
-  
+  walletUsdcBalance: 0,
+  riskSearcherBalance: 0,
   totalScansExecuted: 0,
   activeSubscription: null,
-  githubBound: '@0xarch-sec',
-  twitterBound: '@zkAudit_node',
+  githubBound: '',
+  twitterBound: '',
 };
 
 export const INITIAL_INVESTIGATIONS: TokenInvestigation[] = [
@@ -329,41 +325,16 @@ function withdraw(uint wad) public {
   }
 ];
 
-export const INITIAL_TRANSACTIONS: LedgerTransaction[] = [
-  {
-    id: 'tx-1',
-    timestamp: 'Just now',
-    operation: 'Free Trial Allocation (World ID)',
-    typeIcon: 'fingerprint',
-    amount: '+15 Scans (Trial)',
-    isCredit: true,
-    isFree: true,
-    category: 'service',
-    txHash: '0x94b...21a',
-    settlement: 'Completed'
-  },
-  {
-    id: 'tx-2',
-    timestamp: 'Today 10:14:02',
-    operation: 'Deposit to Wallet (Base L2)',
-    typeIcon: 'south_west',
-    amount: '+50.00 USDC',
-    isCredit: true,
-    isFree: false,
-    category: 'wallet',
-    txHash: '0x71a...99c',
-    settlement: 'Confirmed'
-  }
-];
+export const INITIAL_TRANSACTIONS: LedgerTransaction[] = [];
 
 export const SUPPORTED_CHAINS = [
-  { name: 'Ethereum', symbol: 'ETH', color: '#adc6ff', rpcLatency: '120ms', gasTarget: '14 Gwei', blockTime: '12.0s', archiveNodes: 'Online' },
-  { name: 'Base', symbol: 'BASE', color: '#4cd7f6', rpcLatency: '68ms', gasTarget: '0.002 Gwei', blockTime: '2.0s', archiveNodes: 'Online' },
-  { name: 'Arbitrum', symbol: 'ARB', color: '#4d8eff', rpcLatency: '85ms', gasTarget: '0.1 Gwei', blockTime: '0.25s', archiveNodes: 'Online' },
-  { name: 'Optimism', symbol: 'OP', color: '#ffb4ab', rpcLatency: '92ms', gasTarget: '0.001 Gwei', blockTime: '2.0s', archiveNodes: 'Online' },
-  { name: 'Polygon', symbol: 'POL', color: '#adc6ff', rpcLatency: '145ms', gasTarget: '32 Gwei', blockTime: '2.1s', archiveNodes: 'Online' },
-  { name: 'BNB Chain', symbol: 'BNB', color: '#03b5d3', rpcLatency: '110ms', gasTarget: '3 Gwei', blockTime: '3.0s', archiveNodes: 'Online' },
-  { name: 'Avalanche', symbol: 'AVAX', color: '#ffb4ab', rpcLatency: '105ms', gasTarget: '26 nAVAX', blockTime: '1.8s', archiveNodes: 'Online' },
+  { name: 'Ethereum', symbol: 'ETH', color: '#adc6ff' },
+  { name: 'Base', symbol: 'BASE', color: '#4cd7f6' },
+  { name: 'Arbitrum', symbol: 'ARB', color: '#4d8eff' },
+  { name: 'Optimism', symbol: 'OP', color: '#ffb4ab' },
+  { name: 'Polygon', symbol: 'POL', color: '#adc6ff' },
+  { name: 'BNB Chain', symbol: 'BNB', color: '#03b5d3' },
+  { name: 'Avalanche', symbol: 'AVAX', color: '#ffb4ab' },
 ];
 
 export const LOGO_URL = '/assets/logo.svg';

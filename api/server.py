@@ -1,20 +1,13 @@
+"""Persistent FastAPI + SSE server for RiskSearcher.
+
+Security boundary: the browser never authorizes a scan by itself.  A Circle
+passkey smart account signs a short-lived challenge, the backend issues an
+opaque session, and every user-specific endpoint derives the wallet identity
+from that session.  Firestore is authoritative for World ID trial credits,
+paid scan credits, scan reservations, and service-ledger history.
 """
-FastAPI + SSE server wrapping core.analyzer.analyze().
 
-This is a persistent server, NOT a serverless function — analysis can take
-multiple minutes (LLM specialist + judge calls), which would be killed by
-standard serverless timeout ceilings (e.g. Vercel's default). Deploy this
-on a long-lived host (Railway, Render, Fly.io, or a plain VPS), never as a
-serverless function.
-
-Run locally:
-    pip install fastapi uvicorn
-    uvicorn api.server:app --reload --port 8000
-
-The frontend (interface/) should point VITE_API_BASE_URL at wherever this
-ends up hosted — e.g. http://localhost:8000 locally, or the real backend
-host once deployed. This is a separate deployment from the Vercel frontend.
-"""
+from __future__ import annotations
 
 import json
 import os
@@ -22,23 +15,20 @@ import queue
 import threading
 from typing import Generator
 
-from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from core.analyzer import analyze
-from db import scan_history_store, world_id_store
-from rpc import arc_provider, world_id_provider
+from db import auth_store, entitlement_store, scan_history_store, world_id_store
+from rpc import arc_provider, smart_account_auth, world_id_provider
 
 app = FastAPI(title="RiskSearcher API")
 
-# CORS: allow the deployed Vercel frontend, its preview deployments, and local dev.
-# The preview regex is intentionally limited to this project; do not use a
-# wildcard origin because this API permits credentials.
 ALLOWED_ORIGINS = [
     "http://localhost:3000",
-    "http://localhost:5173",  # default Vite dev port
+    "http://localhost:5173",
     "https://risksearcher.vercel.app",
 ]
 VERCEL_PREVIEW_ORIGIN_REGEX = r"^https://risksearcher-[a-z0-9-]+\.vercel\.app$"
@@ -54,16 +44,90 @@ app.add_middleware(
 
 
 def _sse_event(event_type: str, data: dict) -> str:
-    """Format a single Server-Sent Event."""
     return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
 
 
-def _run_analysis_stream(address: str, chain: str, user_address: str = "") -> Generator[str, None, None]:
-    """
-    Runs analyze() in a background thread (since it's a long, blocking,
-    synchronous call) and streams each progress message + the final result
-    as SSE events, via a thread-safe queue bridging the two.
-    """
+def _bearer_token(authorization: str | None) -> str:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    token = authorization.split(" ", 1)[1].strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return token
+
+
+def require_session(authorization: str | None = Header(default=None)) -> str:
+    token = _bearer_token(authorization)
+    session = auth_store.get_session(token)
+    if session.get("no_data"):
+        raise HTTPException(status_code=401, detail="Session expired or invalid. Sign in with your passkey again.")
+    wallet = session.get("wallet_address", "")
+    if not wallet:
+        raise HTTPException(status_code=401, detail="Invalid session")
+    return wallet
+
+
+# ---------------------------------------------------------------------------
+# Passkey smart-account authentication
+# ---------------------------------------------------------------------------
+
+class AuthChallengeRequest(BaseModel):
+    address: str
+
+
+class AuthVerifyRequest(BaseModel):
+    address: str
+    challenge_id: str
+    signature: str
+
+
+@app.post("/auth/challenge")
+def auth_challenge_endpoint(payload: AuthChallengeRequest = Body(...)):
+    result = auth_store.issue_challenge(payload.address)
+    if result.get("no_data"):
+        raise HTTPException(status_code=503 if result.get("reason") == "firestore_not_configured" else 400, detail=result.get("reason", "Unable to issue challenge"))
+    return result
+
+
+@app.post("/auth/verify")
+def auth_verify_endpoint(payload: AuthVerifyRequest = Body(...)):
+    challenge = auth_store.get_challenge(payload.challenge_id)
+    if challenge.get("no_data"):
+        raise HTTPException(status_code=401, detail=challenge.get("reason", "Invalid authentication challenge"))
+    if challenge.get("wallet_address") != payload.address.strip().lower():
+        raise HTTPException(status_code=401, detail="Wallet does not match authentication challenge")
+    message = challenge.get("message", "")
+    if not smart_account_auth.verify_message_signature(payload.address, message, payload.signature):
+        raise HTTPException(status_code=401, detail="Passkey smart-account signature could not be verified")
+    session = auth_store.consume_challenge_and_create_session(payload.challenge_id, payload.address)
+    if session.get("no_data"):
+        raise HTTPException(status_code=401, detail=session.get("reason", "Could not create session"))
+    return session
+
+
+@app.post("/auth/logout")
+def auth_logout_endpoint(authorization: str | None = Header(default=None)):
+    token = _bearer_token(authorization)
+    auth_store.revoke_session(token)
+    return {"ok": True}
+
+
+@app.get("/auth/session")
+def auth_session_endpoint(wallet_address: str = Depends(require_session)):
+    """Restore a still-valid browser session without re-running passkey auth."""
+    return {"authenticated": True, "wallet_address": wallet_address}
+
+
+# ---------------------------------------------------------------------------
+# Authoritative entitlement + analysis flow
+# ---------------------------------------------------------------------------
+
+def _run_analysis_stream(
+    address: str,
+    chain: str,
+    wallet_address: str,
+    reservation_id: str,
+) -> Generator[str, None, None]:
     q: "queue.Queue[tuple[str, dict] | None]" = queue.Queue()
 
     def on_progress(msg: str) -> None:
@@ -80,30 +144,37 @@ def _run_analysis_stream(address: str, chain: str, user_address: str = "") -> Ge
                 "score_source": getattr(result, "score_source", None),
                 "verdict_source": getattr(result, "verdict_source", None),
                 "final_reason": getattr(result, "final_reason", ""),
+                "parameters": getattr(result, "parameters", None),
                 "breakdown": result.breakdown,
                 "graph_evidence": getattr(result, "graph_evidence", None),
             }
-            q.put(("result", result_payload))
 
-            # Best-effort: history saving must never affect the scan result
-            # the user already received, or the stream that already
-            # completed successfully above.
-            if user_address:
-                try:
-                    scan_history_store.save_scan(user_address, {
-                        "contract_address": address,
-                        "chain": chain,
-                        **result_payload,
-                    })
-                except Exception as exc:
-                    print(f"    [HISTORY] Unexpected error saving scan: {exc}")
+            try:
+                scan_history_store.save_scan(wallet_address, {
+                    "contract_address": address,
+                    "chain": chain,
+                    **result_payload,
+                })
+            except Exception as exc:
+                print(f"    [HISTORY] Unexpected error saving scan: {exc}")
+
+            committed = entitlement_store.commit_scan(reservation_id)
+            if not committed.get("no_data") and committed.get("entitlement"):
+                result_payload["entitlement"] = committed["entitlement"]
+            else:
+                # The analysis succeeded and the credit was already reserved.
+                # Do not pretend it was refunded simply because a post-analysis
+                # ledger update had a transient problem.
+                result_payload["entitlement"] = entitlement_store.get_entitlements(wallet_address)
+
+            q.put(("result", result_payload))
         except Exception as exc:
+            entitlement_store.refund_scan(reservation_id)
             q.put(("error", {"message": str(exc)}))
         finally:
-            q.put(None)  # sentinel: stream is done
+            q.put(None)
 
-    thread = threading.Thread(target=worker, daemon=True)
-    thread.start()
+    threading.Thread(target=worker, daemon=True).start()
 
     while True:
         item = q.get()
@@ -113,49 +184,59 @@ def _run_analysis_stream(address: str, chain: str, user_address: str = "") -> Ge
         yield _sse_event(event_type, data)
 
 
+@app.get("/entitlements")
+def entitlements_endpoint(wallet_address: str = Depends(require_session)):
+    # Seamlessly migrate any claim created by the older 15-scan/frontend-only
+    # build onto the current authoritative 3-scan ledger. This is idempotent
+    # and never refills a current exhausted allowance.
+    world_id_store.migrate_legacy_claim_for_wallet(wallet_address)
+    state = entitlement_store.get_entitlements(wallet_address)
+    if state.get("no_data"):
+        raise HTTPException(status_code=503, detail=f"Entitlement ledger unavailable: {state.get('reason')}")
+    return state
+
+
 @app.get("/analyze")
 def analyze_endpoint(
     address: str = Query(..., description="Contract address to analyze"),
-    chain: str = Query("ethereum", description="Chain name, e.g. ethereum, base, arbitrum"),
-    user_address: str = Query("", description="Connected wallet address, for scan-history persistence. Optional - omitting it just means this scan isn't saved to history."),
+    chain: str = Query("ethereum", description="Chain name"),
+    wallet_address: str = Depends(require_session),
 ):
-    """
-    Streams analysis progress and the final result as Server-Sent Events.
-    Frontend usage: new EventSource(`${API_BASE}/analyze?address=...&chain=...`)
-    """
+    world_id_store.migrate_legacy_claim_for_wallet(wallet_address)
+    reservation = entitlement_store.reserve_scan(wallet_address, address, chain)
+    if reservation.get("no_data"):
+        raise HTTPException(status_code=503, detail=f"Entitlement ledger unavailable: {reservation.get('reason')}")
+    if not reservation.get("allowed"):
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "code": "SCAN_CREDIT_REQUIRED",
+                "message": "Verify humanity for 3 free scans or buy 10 scans for $5 testnet USDC.",
+                "entitlement": reservation.get("entitlement"),
+            },
+        )
+
     return StreamingResponse(
-        _run_analysis_stream(address, chain, user_address),
+        _run_analysis_stream(address, chain, wallet_address, reservation["reservation_id"]),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",  # disable proxy buffering (nginx etc.) so SSE streams live
+            "X-Accel-Buffering": "no",
         },
     )
 
 
 @app.get("/history")
-def history_endpoint(address: str = Query(..., description="Connected wallet address")):
-    """Past scans for this user, most recent first. Never raises - a
-    Firestore problem comes back as {"no_data": true, "reason": "..."}."""
-    return scan_history_store.get_scan_history(address)
+def history_endpoint(wallet_address: str = Depends(require_session)):
+    return scan_history_store.get_scan_history(wallet_address)
 
 
-class WithdrawRequest(BaseModel):
-    address: str  # the user's identity key (their connected EOA)
-    destination: str  # where to send USDC on Arc Testnet
-    amount: float
-
-
-class SubscribeRequest(BaseModel):
-    address: str
-    plan_price: float
-
+# ---------------------------------------------------------------------------
+# Arc Testnet wallet + paid 10-scan packs
+# ---------------------------------------------------------------------------
 
 def _wallet_and_balance(user_address: str) -> dict:
-    """Real Arc Testnet deposit address + live USDC balance for a user.
-    Returns a no_data-shaped dict (never raises) if Arc isn't configured
-    or the account can't be reached — same discipline as Graph evidence."""
     wallet = arc_provider.get_or_create_wallet(user_address)
     if wallet.get("no_data"):
         return wallet
@@ -169,56 +250,335 @@ def _wallet_and_balance(user_address: str) -> dict:
 
 
 @app.get("/arc/wallet")
-def arc_wallet_endpoint(address: str = Query(..., description="Connected wallet address (user identity key)")):
-    """Real Arc Testnet deposit address + live USDC balance for this user.
-    Creates the wallet on first call; same address is returned on every
-    subsequent call. Never raises — a Circle-side or config problem comes
-    back as {"no_data": true, "reason": "..."} for the frontend to handle."""
-    return _wallet_and_balance(address)
+def arc_wallet_endpoint(wallet_address: str = Depends(require_session)):
+    return _wallet_and_balance(wallet_address)
 
 
 @app.post("/arc/withdraw")
-def arc_withdraw_endpoint(payload: WithdrawRequest = Body(...)):
-    """Real, on-chain USDC transfer from the user's Arc Testnet wallet to
-    an address they specify. 400s only on missing/invalid input; a Circle-
-    side failure still returns 200 with {"no_data": true, "reason": "..."}
-    so the frontend shows a clean error instead of a stack trace."""
-    wallet = arc_provider.get_or_create_wallet(payload.address)
+def arc_withdraw_endpoint(wallet_address: str = Depends(require_session)):
+    # Product decision for the testnet release: there is no off-ramp or bridge
+    # yet. Keeping this disabled server-side prevents an old frontend from
+    # accidentally exposing the former misleading "withdraw" flow.
+    raise HTTPException(status_code=501, detail="Off-ramp / withdrawal is coming soon. Use the Arc Testnet faucet to fund your wallet for now.")
+
+
+@app.post("/arc/send")
+def arc_send_endpoint(payload: dict = Body(...), wallet_address: str = Depends(require_session)):
+    """Optional direct Arc-Testnet transfer. This is NOT an off-ramp/bridge."""
+    destination = str(payload.get("destination", "")).strip()
+    try:
+        amount = float(payload.get("amount", 0))
+    except (TypeError, ValueError):
+        amount = 0
+    wallet = arc_provider.get_or_create_wallet(wallet_address)
     if wallet.get("no_data"):
         raise HTTPException(status_code=400, detail=f"Arc wallet unavailable: {wallet.get('reason')}")
-    return arc_provider.send_usdc(wallet["wallet_id"], payload.destination, payload.amount)
+    result = arc_provider.send_usdc(wallet["wallet_id"], destination, amount)
+    if result.get("no_data"):
+        raise HTTPException(status_code=400, detail=f"Arc transfer failed: {result.get('reason')}")
+    return result
 
 
 @app.post("/arc/subscribe")
-def arc_subscribe_endpoint(payload: SubscribeRequest = Body(...)):
-    """Real, on-chain USDC payment from the user's Arc Testnet wallet to
-    the platform treasury address (ARC_TREASURY_ADDRESS), for the given
-    plan price. Same underlying transfer as /arc/withdraw, different
-    destination. Does not itself grant subscription access server-side —
-    the frontend marks the plan active once the transfer is confirmed
-    submitted; this endpoint's job is only to move the real funds."""
+def arc_subscribe_endpoint(wallet_address: str = Depends(require_session)):
+    """Purchase one fixed testnet scan pack: $5 USDC -> 10 scan credits.
+
+    The backend first claims a short Firestore payment-intent lease, so two
+    concurrent requests cannot both submit Circle transfers.  A submitted
+    transaction is persisted before credits are considered and is resumed
+    after refresh/restart instead of charging again.
+    """
     treasury_address = os.environ.get("ARC_TREASURY_ADDRESS", "").strip()
     if not treasury_address:
-        raise HTTPException(status_code=400, detail="ARC_TREASURY_ADDRESS is not configured on the server")
-    wallet = arc_provider.get_or_create_wallet(payload.address)
+        raise HTTPException(status_code=503, detail="ARC_TREASURY_ADDRESS is not configured on the server")
+
+    # First resume a normal durable purchase if one already exists.
+    open_purchase = entitlement_store.get_open_purchase_for_wallet(wallet_address)
+    if open_purchase.get("no_data"):
+        raise HTTPException(status_code=503, detail=f"Payment ledger unavailable: {open_purchase.get('reason')}")
+    existing = open_purchase.get("purchase")
+    if existing:
+        return _reconcile_purchase(wallet_address, existing["transaction_id"], allow_not_found=False, reused_pending=True)
+
+    # Recover an external Circle transfer whose intent survived a restart but
+    # whose scan_pack_purchases row had not yet been created.
+    intent_state = entitlement_store.get_purchase_intent(wallet_address)
+    if intent_state.get("no_data"):
+        raise HTTPException(status_code=503, detail=f"Payment intent ledger unavailable: {intent_state.get('reason')}")
+    intent = intent_state.get("intent")
+    if intent:
+        intent_tx = str(intent.get("transaction_id", "") or "")
+        if intent_tx:
+            restored = entitlement_store.create_pending_purchase(
+                wallet_address, intent_tx, str(intent.get("circle_status", "PENDING")).upper()
+            )
+            if restored.get("no_data"):
+                raise HTTPException(status_code=503, detail=f"Could not restore pending payment: {restored.get('reason')}")
+            # The durable purchase row now owns recovery. The intent is redundant
+            # and can be cleared even while Circle is still pending.
+            entitlement_store.clear_purchase_intent(wallet_address, str(intent.get("intent_token", "")))
+            return _reconcile_purchase(wallet_address, intent_tx, reused_pending=True)
+        raise HTTPException(status_code=409, detail="A scan-pack payment is already being initiated. Wait a moment and check its status instead of paying again.")
+
+    claim = entitlement_store.begin_purchase_intent(wallet_address)
+    if claim.get("no_data"):
+        raise HTTPException(status_code=503, detail=f"Payment intent unavailable: {claim.get('reason')}")
+    if not claim.get("acquired"):
+        intent_tx = str(claim.get("transaction_id", "") or "")
+        if intent_tx:
+            restored = entitlement_store.create_pending_purchase(
+                wallet_address, intent_tx, str(claim.get("circle_status", "PENDING")).upper()
+            )
+            if restored.get("no_data"):
+                raise HTTPException(status_code=503, detail=f"Could not restore pending payment: {restored.get('reason')}")
+            entitlement_store.clear_purchase_intent(wallet_address, str(claim.get("intent_token", "")))
+            return _reconcile_purchase(wallet_address, intent_tx, reused_pending=True)
+        raise HTTPException(status_code=409, detail="A scan-pack payment is already being initiated. Wait a moment and retry status.")
+
+    intent_token = str(claim.get("intent_token", ""))
+    wallet = arc_provider.get_or_create_wallet(wallet_address)
     if wallet.get("no_data"):
+        entitlement_store.clear_purchase_intent(wallet_address, intent_token)
         raise HTTPException(status_code=400, detail=f"Arc wallet unavailable: {wallet.get('reason')}")
-    return arc_provider.send_usdc(wallet["wallet_id"], treasury_address, payload.plan_price)
+
+    transfer = arc_provider.send_usdc(
+        wallet["wallet_id"],
+        treasury_address,
+        entitlement_store.PAID_PACK_PRICE_USDC,
+    )
+    if transfer.get("no_data"):
+        entitlement_store.clear_purchase_intent(wallet_address, intent_token)
+        raise HTTPException(status_code=400, detail=f"Payment transfer failed: {transfer.get('reason')}")
+    transaction_id = transfer.get("transaction_id", "")
+    if not transaction_id:
+        # Keep the short intent lease instead of permitting an immediate
+        # duplicate transfer when Circle gave us no recoverable transaction id.
+        raise HTTPException(status_code=502, detail="Circle accepted the transfer request but returned no transaction ID. Do not retry immediately.")
+
+    attached = entitlement_store.attach_purchase_transaction(
+        wallet_address, intent_token, transaction_id, str(transfer.get("status", "INITIATED")).upper()
+    )
+    purchase = entitlement_store.create_pending_purchase(
+        wallet_address,
+        transaction_id,
+        str(transfer.get("status", "INITIATED")).upper(),
+    )
+    if purchase.get("no_data"):
+        # If attach succeeded the submitted transaction remains recoverable from
+        # the payment intent for 24 hours. Either way expose the tx id and never
+        # tell the browser to auto-submit a replacement payment.
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "PAYMENT_PERSIST_FAILED",
+                "message": "Circle transfer was submitted but RiskSearcher could not persist the purchase. Do not retry payment automatically.",
+                "transaction_id": transaction_id,
+                "intent_recoverable": not attached.get("no_data"),
+            },
+        )
+
+    entitlement_store.clear_purchase_intent(wallet_address, intent_token)
+    return {
+        "no_data": False,
+        "transaction_id": transaction_id,
+        "status": str(transfer.get("status", "INITIATED")).upper(),
+        "price_usdc": entitlement_store.PAID_PACK_PRICE_USDC,
+        "scans": entitlement_store.PAID_PACK_SCANS,
+        "credits_granted": False,
+        "reused_pending": False,
+    }
 
 
-class WorldIdVerifyRequest(BaseModel):
-    address: str  # connected wallet address, linked to the grant for reference only
-    idkit_result: dict  # complete result IDKit's onSuccess/handleVerify received
+def _reconcile_purchase(
+    wallet_address: str,
+    transaction_id: str,
+    *,
+    allow_not_found: bool = False,
+    reused_pending: bool = False,
+) -> dict:
+    purchase = entitlement_store.get_purchase(transaction_id)
+    if purchase.get("no_data"):
+        if allow_not_found:
+            return {"no_data": False, "pending_purchase": None}
+        raise HTTPException(status_code=404, detail=purchase.get("reason", "Purchase not found"))
+    if purchase.get("wallet_address") != wallet_address:
+        raise HTTPException(status_code=403, detail="This payment does not belong to the authenticated wallet")
 
+    # If a previous poll already granted credits, return the durable state
+    # immediately without depending on Circle being reachable again.
+    if purchase.get("grant_applied"):
+        return {
+            "no_data": False,
+            "transaction_id": transaction_id,
+            "status": str(purchase.get("circle_status", "CONFIRMED")).upper(),
+            "tx_hash": purchase.get("tx_hash", ""),
+            "credits_granted": True,
+            "reused_pending": reused_pending,
+            "entitlement": entitlement_store.get_entitlements(wallet_address),
+        }
+
+    circle_tx = arc_provider.get_transaction(transaction_id)
+    if circle_tx.get("no_data"):
+        # Durable last-known state is safer than inventing success.  The
+        # frontend can resume this same transaction later instead of paying twice.
+        return {
+            "no_data": False,
+            "transaction_id": transaction_id,
+            "status": str(purchase.get("circle_status", "PENDING")).upper(),
+            "credits_granted": False,
+            "reused_pending": reused_pending,
+            "reason": circle_tx.get("reason", "status_unavailable"),
+            "entitlement": entitlement_store.get_entitlements(wallet_address),
+        }
+
+    status = str(circle_tx.get("status", "UNKNOWN")).upper()
+    tx_hash = circle_tx.get("tx_hash", "")
+    entitlement_store.update_purchase_status(transaction_id, status, tx_hash)
+    if status in entitlement_store.SUCCESSFUL_PURCHASE_STATES:
+        granted = entitlement_store.grant_confirmed_purchase(wallet_address, transaction_id, status, tx_hash)
+        if granted.get("no_data"):
+            raise HTTPException(status_code=503, detail=f"Payment confirmed but credit grant failed: {granted.get('reason')}")
+        return {
+            "no_data": False,
+            "transaction_id": transaction_id,
+            "status": status,
+            "tx_hash": tx_hash,
+            "credits_granted": True,
+            "reused_pending": reused_pending,
+            "entitlement": granted.get("entitlement"),
+        }
+
+    return {
+        "no_data": False,
+        "transaction_id": transaction_id,
+        "status": status,
+        "tx_hash": tx_hash,
+        "credits_granted": False,
+        "reused_pending": reused_pending,
+        "entitlement": entitlement_store.get_entitlements(wallet_address),
+    }
+
+
+@app.get("/arc/subscription-status")
+def arc_subscription_status_endpoint(
+    transaction_id: str = Query(...),
+    wallet_address: str = Depends(require_session),
+):
+    return _reconcile_purchase(wallet_address, transaction_id)
+
+
+@app.get("/arc/pending-subscription")
+def arc_pending_subscription_endpoint(wallet_address: str = Depends(require_session)):
+    """Find/recover/reconcile the user's newest outstanding payment, if any."""
+    open_purchase = entitlement_store.get_open_purchase_for_wallet(wallet_address)
+    if open_purchase.get("no_data"):
+        raise HTTPException(status_code=503, detail=f"Payment ledger unavailable: {open_purchase.get('reason')}")
+    purchase = open_purchase.get("purchase")
+    if purchase:
+        reconciled = _reconcile_purchase(wallet_address, purchase["transaction_id"], reused_pending=True)
+        return {"no_data": False, "pending_purchase": reconciled}
+
+    intent_state = entitlement_store.get_purchase_intent(wallet_address)
+    if intent_state.get("no_data"):
+        raise HTTPException(status_code=503, detail=f"Payment intent ledger unavailable: {intent_state.get('reason')}")
+    intent = intent_state.get("intent")
+    if not intent:
+        return {"no_data": False, "pending_purchase": None}
+    transaction_id = str(intent.get("transaction_id", "") or "")
+    if not transaction_id:
+        return {
+            "no_data": False,
+            "pending_purchase": {
+                "status": "INITIATING",
+                "credits_granted": False,
+                "reason": "payment_initiation_in_progress",
+            },
+        }
+
+    restored = entitlement_store.create_pending_purchase(
+        wallet_address, transaction_id, str(intent.get("circle_status", "PENDING")).upper()
+    )
+    if restored.get("no_data"):
+        raise HTTPException(status_code=503, detail=f"Could not restore pending payment: {restored.get('reason')}")
+    entitlement_store.clear_purchase_intent(wallet_address, str(intent.get("intent_token", "")))
+    reconciled = _reconcile_purchase(wallet_address, transaction_id, reused_pending=True)
+    return {"no_data": False, "pending_purchase": reconciled}
+
+
+# ---------------------------------------------------------------------------
+# Real per-user ledger (service entries + Circle wallet activity)
+# ---------------------------------------------------------------------------
+
+def _circle_ledger_rows(wallet_address: str) -> list[dict]:
+    wallet = arc_provider.get_or_create_wallet(wallet_address)
+    if wallet.get("no_data"):
+        return []
+    history = arc_provider.list_wallet_transactions(wallet["wallet_id"])
+    if history.get("no_data"):
+        return []
+    own_address = str(wallet.get("deposit_address", "")).lower()
+    rows: list[dict] = []
+    for tx in history.get("transactions", []):
+        if not isinstance(tx, dict):
+            continue
+        amounts = tx.get("amounts") or []
+        if isinstance(amounts, str):
+            amounts = [amounts]
+        amount = amounts[0] if amounts else tx.get("amount", "")
+        destination = str(tx.get("destinationAddress") or tx.get("destination_address") or "").lower()
+        source = str(tx.get("sourceAddress") or tx.get("source_address") or "").lower()
+        incoming = bool(own_address and destination == own_address and source != own_address)
+        operation = "Arc Testnet deposit" if incoming else "Arc Testnet wallet transfer"
+        state = str(tx.get("state") or tx.get("status") or "Pending").title()
+        created = tx.get("createDate") or tx.get("create_date") or tx.get("updateDate") or tx.get("update_date")
+        tx_id = str(tx.get("id") or "")
+        tx_hash = str(tx.get("txHash") or tx.get("tx_hash") or tx_id)
+        amount_text = f"{'+' if incoming else '-'}{amount} USDC" if amount not in (None, "") else "USDC transfer"
+        rows.append({
+            "id": f"circle-{tx_id or tx_hash}",
+            "timestamp": created,
+            "operation": operation,
+            "typeIcon": "south_west" if incoming else "north_east",
+            "amount": amount_text,
+            "isCredit": incoming,
+            "isFree": False,
+            "category": "wallet",
+            "txHash": tx_hash,
+            "settlement": state,
+        })
+    return rows
+
+
+@app.get("/ledger")
+def ledger_endpoint(wallet_address: str = Depends(require_session)):
+    service = entitlement_store.get_service_ledger(wallet_address)
+    raw_service_rows = [] if service.get("no_data") else service.get("records", [])
+    service_rows = [
+        {
+            "id": row.get("id", ""),
+            "timestamp": row.get("timestamp"),
+            "operation": row.get("operation", "RiskSearcher service activity"),
+            "typeIcon": row.get("type_icon", "receipt_long"),
+            "amount": row.get("amount", ""),
+            "isCredit": bool(row.get("is_credit", False)),
+            "isFree": bool(row.get("is_free", False)),
+            "category": "service",
+            "txHash": row.get("tx_hash", ""),
+            "settlement": row.get("settlement", "Completed"),
+        }
+        for row in raw_service_rows
+    ]
+    rows = [*service_rows, *_circle_ledger_rows(wallet_address)]
+    rows.sort(key=lambda row: row.get("timestamp") or "", reverse=True)
+    return {"no_data": False, "records": rows}
+
+
+# ---------------------------------------------------------------------------
+# World ID Selfie Check - authenticated wallet binding
+# ---------------------------------------------------------------------------
 
 @app.post("/world-id/rp-signature")
 def world_id_rp_signature_endpoint(payload: dict = Body(...)):
-    """Server-signed rp_context for an IDKit request. World ID 4.0 requires
-    every request (Selfie Check included) to carry this. Signing lives here
-    in the Python backend (not a Vercel serverless function) because the
-    official @worldcoin/idkit-server package refuses to run outside real
-    Node.js - see rpc/world_id_provider.py's module docstring for the full
-    story and how this Python port was verified against it."""
     action = payload.get("action", "verify-humanity")
     signing_key = os.environ.get("WORLD_ID_RP_SIGNING_KEY", "").strip()
     rp_id = os.environ.get("WORLD_ID_RP_ID", "").strip()
@@ -231,46 +591,60 @@ def world_id_rp_signature_endpoint(payload: dict = Body(...)):
     return {"rp_id": rp_id, **signed}
 
 
+class WorldIdVerifyRequest(BaseModel):
+    idkit_result: dict
+
+
 @app.post("/world-id/verify")
-def world_id_verify_endpoint(payload: WorldIdVerifyRequest = Body(...)):
-    """Verify a completed Selfie Check proof server-side - never trust the
-    client's own "success" state - and, on a first-time verification for
-    this human, atomically grant the one-time free trial. A human who
-    already claimed a trial with a different wallet gets a clear
-    already_claimed response instead of a second grant. This is the real
-    Sybil-defense check; everything upstream of this call is just UI."""
+def world_id_verify_endpoint(payload: WorldIdVerifyRequest = Body(...), wallet_address: str = Depends(require_session)):
     rp_id = os.environ.get("WORLD_ID_RP_ID", "").strip()
     if not rp_id:
         raise HTTPException(status_code=500, detail="WORLD_ID_RP_ID is not configured on the server")
-
     try:
         result = world_id_provider.verify_proof(rp_id, payload.idkit_result)
     except world_id_provider.WorldIdError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    claim = world_id_store.claim_trial(result["nullifier"], payload.address)
+    claim = world_id_store.claim_trial(result["nullifier"], wallet_address)
     if claim.get("no_data"):
         raise HTTPException(status_code=503, detail=f"Trial ledger unavailable: {claim.get('reason')}")
-    return {**claim, "nullifier": result["nullifier"]}
+
+    # A claim produced by the older frontend-only build may already exist for
+    # this exact wallet. Migrate it to the 3-scan authoritative ledger and
+    # treat the verified user as successfully restored, while still rejecting
+    # the same nullifier when it belongs to a different wallet.
+    if not claim.get("claimed") and claim.get("reason") == "already_claimed" and claim.get("same_wallet"):
+        migrated = world_id_store.migrate_legacy_claim_for_wallet(wallet_address)
+        if migrated.get("no_data"):
+            raise HTTPException(status_code=503, detail=f"Trial migration unavailable: {migrated.get('reason')}")
+        claim = {
+            "no_data": False,
+            "claimed": True,
+            "reason": "already_claimed_same_wallet",
+            "wallet_address": wallet_address,
+            "scans_granted": entitlement_store.FREE_TRIAL_SCANS,
+            "scans_remaining": migrated.get("free_scans_remaining", 0),
+        }
+
+    return {**claim, "nullifier": result["nullifier"], "entitlement": entitlement_store.get_entitlements(wallet_address)}
 
 
 @app.get("/world-id/status")
-def world_id_status_endpoint(
-    nullifier: str = Query("", description="World ID nullifier for this human. Provide this OR address."),
-    address: str = Query("", description="Wallet address. Used when no nullifier is cached locally yet - e.g. a device/browser that never itself completed Selfie Check, such as switching from mobile to desktop with the same wallet."),
-):
-    """Check whether this human already claimed their trial, without
-    claiming it. Prefers nullifier (exact, and how the frontend restores
-    state on the device that actually completed Selfie Check); falls back
-    to a wallet-address lookup for a device with no locally-cached
-    nullifier. Either lookup is read-only - neither claims a trial."""
-    if nullifier:
-        return world_id_store.get_claim_status(nullifier)
-    if address:
-        return world_id_store.get_claim_status_by_wallet_address(address)
-    raise HTTPException(status_code=400, detail="Provide either nullifier or address")
+def world_id_status_endpoint(wallet_address: str = Depends(require_session)):
+    # Identity is the authenticated wallet, not a caller-supplied address.
+    world_id_store.migrate_legacy_claim_for_wallet(wallet_address)
+    result = world_id_store.get_claim_status_by_wallet_address(wallet_address)
+    if not result.get("no_data"):
+        result["entitlement"] = entitlement_store.get_entitlements(wallet_address)
+    return result
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "free_trial_scans": entitlement_store.FREE_TRIAL_SCANS,
+        "paid_pack_scans": entitlement_store.PAID_PACK_SCANS,
+        "paid_pack_price_usdc": entitlement_store.PAID_PACK_PRICE_USDC,
+        "network": arc_provider._arc_blockchain(),
+    }

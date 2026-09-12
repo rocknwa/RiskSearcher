@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { getArcWallet, paySubscription } from '../services/arcApi';
-import { SUBSCRIPTION_PRICE_USDC } from '../config';
+import { getArcWallet, getPendingSubscription, getSubscriptionStatus, paySubscription } from '../services/arcApi';
+import { SUBSCRIPTION_PRICE_USDC, SUBSCRIPTION_SCANS } from '../config';
+import { EntitlementState } from '../types';
 
 interface SubscriptionModalProps {
   isOpen: boolean;
@@ -8,251 +9,218 @@ interface SubscriptionModalProps {
   walletBalance: number;
   userAddress: string;
   onOpenAddFundsModal: () => void;
-  onSubscribeSuccess: (planName: string, amount: number) => void;
+  onSubscribeSuccess: (entitlement: EntitlementState) => void;
 }
+
+const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+const FAILED = ['FAILED', 'CANCELLED', 'CANCELED', 'DENIED'];
 
 export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
   isOpen,
   onClose,
   walletBalance,
-  userAddress,
   onOpenAddFundsModal,
   onSubscribeSuccess,
 }) => {
   const [isProcessing, setIsProcessing] = useState(false);
-  const [step, setStep] = useState<'checkout' | 'success'>('checkout');
+  const [step, setStep] = useState<'checkout' | 'pending' | 'success'>('checkout');
   const [error, setError] = useState('');
   const [txId, setTxId] = useState<string | null>(null);
   const [liveBalance, setLiveBalance] = useState<number | null>(null);
   const [isLoadingBalance, setIsLoadingBalance] = useState(false);
-  const [balanceError, setBalanceError] = useState<string | null>(null);
+  const [paymentStatus, setPaymentStatus] = useState('');
+
+  const finishSuccess = (entitlement: EntitlementState) => {
+    onSubscribeSuccess(entitlement);
+    setStep('success');
+    setIsProcessing(false);
+  };
+
+  const pollTransaction = async (transactionId: string, attempts = 36) => {
+    setTxId(transactionId);
+    setStep('pending');
+    setIsProcessing(true);
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const status = await getSubscriptionStatus(transactionId);
+      const state = (status.status || 'PENDING').toUpperCase();
+      setPaymentStatus(state);
+      if (status.credits_granted && status.entitlement) {
+        finishSuccess(status.entitlement);
+        return;
+      }
+      if (FAILED.includes(state)) {
+        setStep('checkout');
+        setIsProcessing(false);
+        throw new Error(`Circle payment ${state.toLowerCase()}. No scan credits were added.`);
+      }
+      if (attempt < attempts - 1) await wait(2500);
+    }
+    // Keep the UI in pending state. The user can close/reopen safely; both the
+    // frontend and backend resume this transaction instead of charging again.
+    setIsProcessing(false);
+    throw new Error('Payment is still pending. No credits have been granted yet. You can close this window safely and resume status later.');
+  };
 
   useEffect(() => {
     if (!isOpen) return;
+    let cancelled = false;
     setIsLoadingBalance(true);
-    setBalanceError(null);
-    getArcWallet(userAddress)
-      .then((wallet) => {
-        setIsLoadingBalance(false);
-        if (wallet.no_data) {
-          setBalanceError(wallet.reason || 'Arc treasury service unavailable');
-          return;
+    setError('');
+    setStep('checkout');
+    setTxId(null);
+    setPaymentStatus('');
+
+    Promise.allSettled([getArcWallet(), getPendingSubscription()])
+      .then(async ([walletResult, pendingResult]) => {
+        if (cancelled) return;
+        if (walletResult.status === 'fulfilled') {
+          const wallet = walletResult.value;
+          if (!wallet.no_data) setLiveBalance(wallet.usdc_balance ?? 0);
+        } else {
+          setError(walletResult.reason instanceof Error ? walletResult.reason.message : 'Could not load Arc wallet balance.');
         }
-        setLiveBalance(wallet.usdc_balance ?? 0);
+
+        if (pendingResult.status === 'fulfilled' && pendingResult.value.pending_purchase) {
+          const pending = pendingResult.value.pending_purchase;
+          const state = (pending.status || 'PENDING').toUpperCase();
+          setTxId(pending.transaction_id || null);
+          setPaymentStatus(state);
+          if (pending.credits_granted && pending.entitlement) {
+            finishSuccess(pending.entitlement);
+            return;
+          }
+          if (pending.transaction_id && !FAILED.includes(state)) {
+            try {
+              await pollTransaction(pending.transaction_id, 12);
+            } catch (err) {
+              if (!cancelled) setError(err instanceof Error ? err.message : 'Payment status check failed.');
+            }
+          } else if (!pending.transaction_id && state === 'INITIATING') {
+            setStep('pending');
+            setIsProcessing(false);
+            setError('A payment request is already being initiated server-side. Wait a moment, then close and reopen this screen to refresh its status.');
+          }
+        }
       })
-      .catch((err: Error) => {
-        setIsLoadingBalance(false);
-        setBalanceError(err.message);
-      });
+      .finally(() => { if (!cancelled) setIsLoadingBalance(false); });
+
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, userAddress]);
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
-  const planPrice = SUBSCRIPTION_PRICE_USDC;
-  // Use the real, freshly-fetched balance once we have it. Fall back to the
-  // stale local prop only while the real fetch is still in flight, so the
-  // UI never lets a stale mock number drive a real payment decision.
   const effectiveBalance = liveBalance ?? walletBalance;
-  const hasSufficientBalance = !isLoadingBalance && liveBalance !== null && effectiveBalance >= planPrice;
-  const neededMore = Math.max(0, planPrice - effectiveBalance);
+  const hasSufficientBalance = !isLoadingBalance && liveBalance !== null && effectiveBalance >= SUBSCRIPTION_PRICE_USDC;
+  const neededMore = Math.max(0, SUBSCRIPTION_PRICE_USDC - effectiveBalance);
 
-  const handlePaySubscription = () => {
+  const handlePay = async () => {
     if (!hasSufficientBalance) return;
-
     setIsProcessing(true);
     setError('');
-    paySubscription(userAddress, planPrice)
-      .then((result) => {
-        setIsProcessing(false);
-        if (result.no_data) {
-          setError(`Payment failed: ${result.reason || 'the Arc treasury service is unavailable.'}`);
-          return;
-        }
-        setTxId(result.transaction_id ?? null);
-        onSubscribeSuccess('RiskSearcher Pro', planPrice);
-        setStep('success');
-        setTimeout(() => {
-          setStep('checkout');
-          setTxId(null);
-          onClose();
-        }, 2200);
-      })
-      .catch((err: Error) => {
-        setIsProcessing(false);
-        setError(err.message);
-      });
+    try {
+      const purchase = await paySubscription();
+      if (!purchase.transaction_id) throw new Error('Circle did not return a transaction ID. No credits were granted.');
+      setTxId(purchase.transaction_id);
+      setPaymentStatus((purchase.status || 'INITIATED').toUpperCase());
+      if (purchase.credits_granted && purchase.entitlement) {
+        finishSuccess(purchase.entitlement);
+        return;
+      }
+      await pollTransaction(purchase.transaction_id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Payment failed.');
+      setIsProcessing(false);
+    }
+  };
+
+  const handleResume = async () => {
+    if (!txId) return;
+    setError('');
+    try {
+      await pollTransaction(txId, 12);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Payment status check failed.');
+    }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#060e20]/85 backdrop-blur-md">
-      <div className="bg-[#131b2e] border border-[#222a3d] rounded-2xl w-full max-w-md p-6 space-y-5 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
-        {/* Header */}
-        <div className="flex items-center justify-between pb-3 border-b border-[#222a3d]">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-[#222a3d] border border-[#4d8eff]/40 flex items-center justify-center text-[#4d8eff]">
-              <span className="material-symbols-outlined text-[20px]">stars</span>
-            </div>
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-[#060e20]/85 backdrop-blur-md p-3 sm:p-4">
+      <div className="min-h-full flex items-start sm:items-center justify-center">
+        <div className="bg-[#131b2e] border border-[#222a3d] rounded-2xl w-full max-w-md max-h-[calc(100dvh-1.5rem)] overflow-y-auto p-5 space-y-4 shadow-2xl">
+          <div className="sticky top-0 z-10 -mx-1 -mt-1 px-1 pt-1 pb-3 bg-[#131b2e] flex items-center justify-between border-b border-[#222a3d]">
             <div>
-              <h3 className="font-semibold text-base text-[#dae2fd]">RiskSearcher Subscription</h3>
-              <span className="font-mono text-[10px] text-[#4cd7f6] uppercase font-bold tracking-wider">
-                Prepaid Service Credit Plan
-              </span>
+              <h3 className="font-semibold text-base text-[#dae2fd]">RiskSearcher Scan Access</h3>
+              <span className="font-mono text-[10px] text-[#4cd7f6] uppercase font-bold">Arc Testnet • USDC</span>
             </div>
+            <button type="button" onClick={onClose} className="text-[#8c909f] hover:text-[#dae2fd] p-2 rounded-lg hover:bg-[#222a3d]" aria-label="Close">
+              <span className="material-symbols-outlined text-[20px]">close</span>
+            </button>
           </div>
-          <button
-            onClick={onClose}
-            className="text-[#8c909f] hover:text-[#dae2fd] p-1 rounded hover:bg-[#222a3d] transition-colors"
-          >
-            <span className="material-symbols-outlined text-[20px]">close</span>
-          </button>
-        </div>
 
-        {step === 'checkout' && (
-          <div className="space-y-4">
-            {/* Plan Card */}
-            <div className="bg-[#060e20] p-4 rounded-xl border border-[#4d8eff]/40 space-y-3 relative overflow-hidden">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="font-bold text-base text-[#dae2fd]">RiskSearcher Pro</h4>
-                  <span className="font-mono text-xs text-[#8c909f]">Forensic Specialist Node</span>
-                </div>
-                <div className="text-right">
-                  <span className="font-mono text-xl font-bold text-[#4edea3]">${planPrice}</span>
-                  <span className="font-mono text-xs text-[#8c909f]"> USDC / mo</span>
-                </div>
-              </div>
-
-              {/* Features */}
-              <div className="space-y-1.5 font-mono text-xs text-[#c2c6d6] pt-2 border-t border-[#222a3d]">
-                <div className="flex items-center gap-2 text-[#4edea3]">
-                  <span className="material-symbols-outlined text-[16px]">check</span>
-                  <span>200 deep pre-flight scans per month</span>
-                </div>
-                <div className="flex items-center gap-2 text-[#4edea3]">
-                  <span className="material-symbols-outlined text-[16px]">check</span>
-                  <span>Full risk reports &amp; bytecode decompilation</span>
-                </div>
-                <div className="flex items-center gap-2 text-[#4edea3]">
-                  <span className="material-symbols-outlined text-[16px]">check</span>
-                  <span>Specialist ensemble analysis &amp; LLM Judge</span>
-                </div>
-                <div className="flex items-center gap-2 text-[#4edea3]">
-                  <span className="material-symbols-outlined text-[16px]">check</span>
-                  <span>Unlimited investigation audit log</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Payment Source & Wallet Balance Check */}
-            <div className="bg-[#060e20] p-4 rounded-xl border border-[#222a3d] space-y-2">
-              <div className="flex items-center justify-between font-mono text-xs">
-                <span className="text-[#8c909f]">Payment Source:</span>
-                <span className="text-[#dae2fd] font-semibold">Smart Wallet (USDC)</span>
-              </div>
-              <div className="flex items-center justify-between font-mono text-xs">
-                <span className="text-[#8c909f]">Your Wallet Balance:</span>
-                <span className={`font-bold ${hasSufficientBalance ? 'text-[#4edea3]' : 'text-[#ffb4ab]'}`}>
-                  {isLoadingBalance ? 'Checking Arc chain...' : `$${effectiveBalance.toFixed(2)} USDC`}
-                </span>
-              </div>
-              {balanceError && (
-                <p className="font-mono text-[10px] text-[#ffb4ab]">
-                  Live balance unavailable: {balanceError}
-                </p>
-              )}
-              <div className="flex items-center justify-between font-mono text-xs border-t border-[#222a3d]/70 pt-2">
-                <span className="text-[#8c909f]">Subscription Price:</span>
-                <span className="text-[#dae2fd] font-bold">${planPrice.toFixed(2)} USDC</span>
-              </div>
-            </div>
-
-            {/* Insufficient Balance State */}
-            {isLoadingBalance ? (
-              <div className="bg-[#060e20] p-3.5 rounded-xl border border-[#222a3d] flex items-center gap-2">
-                <span className="material-symbols-outlined animate-spin text-[16px] text-[#4cd7f6]">sync</span>
-                <span className="font-mono text-xs text-[#8c909f]">Checking your real Arc wallet balance...</span>
-              </div>
-            ) : !hasSufficientBalance ? (
-              <div className="bg-[#93000a]/20 border border-[#ffb4ab]/30 p-3.5 rounded-xl space-y-3">
-                <div className="flex items-start gap-2">
-                  <span className="material-symbols-outlined text-[#ffb4ab] text-[18px] shrink-0 mt-0.5">
-                    error_outline
-                  </span>
-                  <div className="space-y-1">
-                    <p className="font-mono text-xs text-[#ffb4ab] leading-relaxed">
-                      Insufficient USDC balance. You need <strong>${neededMore.toFixed(2)}</strong> more USDC to purchase this plan.
-                    </p>
+          {step === 'checkout' && (
+            <div className="space-y-4">
+              <div className="bg-[#060e20] p-4 rounded-xl border border-[#4d8eff]/40">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h4 className="font-bold text-base text-[#dae2fd]">{SUBSCRIPTION_SCANS} Scan Credits</h4>
+                    <p className="font-mono text-[10px] text-[#8c909f] mt-1">Each fresh analysis or re-analysis consumes 1 credit.</p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <span className="font-mono text-xl font-bold text-[#4edea3]">${SUBSCRIPTION_PRICE_USDC}</span>
+                    <span className="font-mono text-[10px] text-[#8c909f] block">testnet USDC</span>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onClose();
-                      onOpenAddFundsModal();
-                    }}
-                    className="w-full py-2 bg-[#4edea3] hover:bg-[#6ffbbe] text-[#003824] font-bold font-mono text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5"
-                  >
-                    <span className="material-symbols-outlined text-[16px]">add_card</span>
-                    <span>Add USDC to Wallet</span>
-                  </button>
+                <div className="mt-3 pt-3 border-t border-[#222a3d] font-mono text-[10px] text-[#c2c6d6] space-y-1.5">
+                  <p>✓ {SUBSCRIPTION_SCANS} server-enforced contract scans</p>
+                  <p>✓ Full analysis reports and history</p>
+                  <p>✓ Credits persist to your authenticated account</p>
+                  <p className="text-[#8c909f]">One-time testnet scan pack. No auto-renewal.</p>
                 </div>
               </div>
-            ) : (
-              <button
-                type="button"
-                disabled={isProcessing}
-                onClick={handlePaySubscription}
-                className="w-full py-3 bg-[#4d8eff] hover:bg-[#adc6ff] text-[#00285d] font-bold text-sm rounded-xl transition-all shadow-md flex items-center justify-center gap-2 active:scale-[0.99]"
-              >
-                {isProcessing ? (
-                  <>
-                    <span className="material-symbols-outlined animate-spin text-[18px]">sync</span>
-                    <span>Submitting Arc payment...</span>
-                  </>
-                ) : (
-                  <>
-                    <span className="material-symbols-outlined text-[18px]">credit_score</span>
-                    <span>Pay ${planPrice} USDC</span>
-                  </>
-                )}
-              </button>
-            )}
 
-            {error && (
-              <p className="text-xs text-[#ffb4ab] font-mono leading-relaxed">{error}</p>
-            )}
+              <div className="bg-[#060e20] p-3 rounded-xl border border-[#222a3d] font-mono text-xs space-y-2">
+                <div className="flex justify-between gap-3"><span className="text-[#8c909f]">Real Arc wallet balance</span><strong className="text-[#dae2fd]">{isLoadingBalance ? 'Checking…' : `$${effectiveBalance.toFixed(2)} USDC`}</strong></div>
+                <div className="flex justify-between gap-3"><span className="text-[#8c909f]">Price</span><strong className="text-[#dae2fd]">${SUBSCRIPTION_PRICE_USDC.toFixed(2)} USDC</strong></div>
+              </div>
 
-            {/* Explicit Non-Withdrawable Rule */}
-            <div className="bg-[#222a3d]/40 p-3 rounded-xl border border-[#222a3d] text-center space-y-1">
-              <span className="font-mono text-[10px] text-[#4cd7f6] uppercase font-bold block">
-                Non-Withdrawable Service Credit
-              </span>
-              <p className="font-mono text-[10px] text-[#8c909f] leading-relaxed">
-                Subscription credits are non-refundable, non-transferable, and cannot be withdrawn. They are dedicated solely to automated RiskSearcher contract scans.
-              </p>
+              {!isLoadingBalance && !hasSufficientBalance ? (
+                <div className="bg-[#93000a]/20 border border-[#ffb4ab]/30 p-3 rounded-xl space-y-2">
+                  <p className="font-mono text-[10px] text-[#ffb4ab]">You need ${neededMore.toFixed(2)} more testnet USDC.</p>
+                  <button type="button" onClick={() => { onClose(); onOpenAddFundsModal(); }} className="w-full py-2.5 bg-[#4edea3] hover:bg-[#6ffbbe] text-[#003824] font-bold font-mono text-xs rounded-lg">Add Funds / Open Faucet</button>
+                </div>
+              ) : (
+                <button type="button" disabled={isProcessing || isLoadingBalance} onClick={handlePay} className="w-full py-3 bg-[#4d8eff] hover:bg-[#adc6ff] disabled:opacity-60 text-[#00285d] font-bold text-sm rounded-xl flex items-center justify-center gap-2">
+                  {isProcessing && <span className="material-symbols-outlined animate-spin text-[18px]">sync</span>}
+                  <span>{isProcessing ? 'Checking payment…' : `Pay $${SUBSCRIPTION_PRICE_USDC} USDC for ${SUBSCRIPTION_SCANS} Scans`}</span>
+                </button>
+              )}
+              {error && <p className="text-xs text-[#ffb4ab] font-mono leading-relaxed">{error}</p>}
             </div>
-          </div>
-        )}
+          )}
 
-        {step === 'success' && (
-          <div className="p-6 text-center space-y-3 bg-[#060e20] rounded-xl border border-[#00a572]/30 animate-in fade-in">
-            <div className="w-12 h-12 rounded-full bg-[#00a572]/20 border border-[#00a572] flex items-center justify-center text-[#4edea3] mx-auto">
-              <span className="material-symbols-outlined text-[28px]">verified</span>
+          {step === 'pending' && (
+            <div className="p-6 text-center space-y-3 bg-[#060e20] rounded-xl border border-[#4d8eff]/30">
+              <span className={`material-symbols-outlined text-[#4cd7f6] text-[32px] ${isProcessing ? 'animate-spin' : ''}`}>sync</span>
+              <h4 className="font-bold text-[#dae2fd]">Waiting for Arc confirmation</h4>
+              <p className="font-mono text-xs text-[#8c909f]">Circle status: <strong className="text-[#4cd7f6]">{paymentStatus || 'PENDING'}</strong></p>
+              <p className="font-mono text-[10px] text-[#8c909f]">This payment is saved server-side. Closing or refreshing will not start a second payment.</p>
+              {txId && <p className="font-mono text-[9px] text-[#8c909f] break-all">Circle tx: {txId}</p>}
+              {!isProcessing && txId && <button type="button" onClick={handleResume} className="w-full py-2.5 bg-[#4d8eff] text-[#00285d] font-bold text-xs rounded-lg">Check Payment Status</button>}
+              {error && <p className="text-xs text-[#ffb4ab] font-mono leading-relaxed">{error}</p>}
             </div>
-            <h4 className="font-bold text-base text-[#dae2fd]">Payment confirmed on Arc ✓</h4>
-            <p className="font-mono text-xs text-[#4edea3]">
-              +${planPrice.toFixed(2)} RiskSearcher service credit added (200 scans unlocked)
-            </p>
-            {txId && (
-              <p className="font-mono text-[10px] text-[#8c909f] break-all">Arc tx: {txId}</p>
-            )}
-            <p className="font-mono text-[11px] text-[#8c909f]">
-              Your subscription balance is service credit and cannot be withdrawn or transferred.
-            </p>
-          </div>
-        )}
+          )}
+
+          {step === 'success' && (
+            <div className="p-6 text-center space-y-3 bg-[#060e20] rounded-xl border border-[#00a572]/30">
+              <div className="w-12 h-12 rounded-full bg-[#00a572]/20 border border-[#00a572] flex items-center justify-center text-[#4edea3] mx-auto"><span className="material-symbols-outlined text-[28px]">verified</span></div>
+              <h4 className="font-bold text-base text-[#dae2fd]">{SUBSCRIPTION_SCANS} scan credits added</h4>
+              <p className="font-mono text-xs text-[#4edea3]">Payment confirmed on Arc Testnet.</p>
+              {txId && <p className="font-mono text-[9px] text-[#8c909f] break-all">Circle tx: {txId}</p>}
+              <button type="button" onClick={() => { setStep('checkout'); onClose(); }} className="w-full py-2.5 bg-[#4d8eff] text-[#00285d] font-bold text-xs rounded-lg">Done</button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

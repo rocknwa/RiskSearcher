@@ -19,11 +19,13 @@ import {
   INITIAL_USER_ACCOUNT,
   INITIAL_TRANSACTIONS,
 } from './data/mockData';
-import { AnalysisApiResult, AnalysisStreamHandlers, TokenInvestigation, EVMNetwork, UserAccountState, LedgerTransaction, RiskVerdict, VulnerabilityFlag } from './types';
+import { AnalysisApiResult, AnalysisStreamHandlers, TokenInvestigation, EVMNetwork, UserAccountState, LedgerTransaction, RiskVerdict, VulnerabilityFlag, EntitlementState } from './types';
 import { streamContractAnalysis } from './services/riskSearcherApi';
 import { getArcWallet } from './services/arcApi';
 import { getScanHistory } from './services/historyApi';
-import { getWorldIdStatus } from './services/worldIdApi';
+import { getEntitlements, getLedger } from './services/entitlementApi';
+import { clearSession, getSessionProfile, getSessionToken, logoutSession } from './services/authApi';
+import { getStoredUsername } from './services/passkeyWallet';
 
 // Reverse of the chainByNetwork map used when sending a scan request -
 // needed to turn a saved history record's plain chain string back into
@@ -60,15 +62,37 @@ export default function App() {
   const [isWithdrawModalOpen, setIsWithdrawModalOpen] = useState(false);
   const [isSubscriptionModalOpen, setIsSubscriptionModalOpen] = useState(false);
 
-  // AccountsView (and anywhere else reading userAccount.walletUsdcBalance
-  // directly) has no fetch of its own - without this, it keeps showing
-  // whatever the local optimistic-update math last landed on, which starts
-  // at a mock value and never gets corrected by reality. Refresh on wallet
-  // connect, address change, and whenever the Wallet & Subscriptions page
-  // is opened, so that display is never more than one navigation stale.
+  // Preserve a valid authenticated passkey session across browser refreshes.
+  // This restores only server-verified identity; balances, entitlements and
+  // ledger rows are then fetched by the existing authenticated effects below.
+  useEffect(() => {
+    if (!getSessionToken()) return;
+    let cancelled = false;
+    void getSessionProfile()
+      .then((profile) => {
+        if (cancelled || !profile.authenticated || !profile.wallet_address) return;
+        const username = getStoredUsername();
+        setUserAccount((prev) => ({
+          ...prev,
+          walletType: 'Passkey Smart Account',
+          address: profile.wallet_address,
+          ensOrAlias: username || 'Passkey account',
+          accountType: 'ERC-4337',
+        }));
+        setTransactions([]);
+        setIsWalletConnected(true);
+      })
+      .catch(() => {
+        clearSession();
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Refresh the real Circle DCW balance on connect/address/view changes so
+  // wallet surfaces never rely on stale client-side balance state.
   useEffect(() => {
     if (!isWalletConnected || !userAccount.address) return;
-    getArcWallet(userAccount.address)
+    getArcWallet()
       .then((wallet) => {
         if (wallet.no_data) return;
         setUserAccount((prev) => ({ ...prev, walletUsdcBalance: wallet.usdc_balance ?? prev.walletUsdcBalance }));
@@ -108,7 +132,7 @@ export default function App() {
   // by the real Firestore doc id so this can safely re-run.
   useEffect(() => {
     if (!isWalletConnected || !userAccount.address) return;
-    getScanHistory(userAccount.address)
+    getScanHistory()
       .then((response) => {
         if (response.no_data || !response.records?.length) return;
         const historyInvestigations = response.records.map((record) => {
@@ -126,48 +150,44 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isWalletConnected, userAccount.address]);
 
-  // The World ID nullifier (not the wallet address) is the real identity
-  // key for the trial - see db/world_id_store.py. Local storage here is
-  // purely a UX convenience so a returning user on the same browser isn't
-  // asked to redo Selfie Check every session; it is NOT the Sybil-defense
-  // mechanism itself (a cleared localStorage or new wallet still can't
-  // re-claim, since the backend checks the nullifier, not this cache).
-  //
-  // A device/browser that never itself completed Selfie Check (e.g. this
-  // same wallet opened on desktop after verifying on mobile) has no
-  // locally-cached nullifier to check - falls back to a wallet-address
-  // lookup in that case, so "verified" status isn't stuck to one device.
+  const applyEntitlement = (state: EntitlementState | undefined) => {
+    if (!state || state.no_data) return;
+    setUserAccount((prev) => ({
+      ...prev,
+      isWorldIdVerified: state.world_verified,
+      totalFreeScans: state.free_scans_granted || 3,
+      freeScansRemaining: state.free_scans_remaining,
+      paidScansRemaining: state.paid_scans_remaining,
+      totalScansExecuted: state.total_scans_executed,
+      // Legacy field retained for component compatibility only; scan counts are authoritative.
+      riskSearcherBalance: 0,
+      activeSubscription: state.paid_scans_remaining > 0 ? {
+        tier: 'PRO',
+        name: '10-Scan Access Pack',
+        status: 'ACTIVE',
+        priceUsdc: 5,
+        scansIncluded: state.paid_scans_remaining,
+      } : null,
+    }));
+  };
+
+  const refreshEntitlementsAndLedger = async () => {
+    if (!isWalletConnected) return;
+    const [entitlementResult, ledgerResult] = await Promise.allSettled([getEntitlements(), getLedger()]);
+    if (entitlementResult.status === 'fulfilled') applyEntitlement(entitlementResult.value);
+    if (ledgerResult.status === 'fulfilled' && !ledgerResult.value.no_data) {
+      setTransactions(ledgerResult.value.records || []);
+    }
+  };
+
+  // Restore authoritative credits + real per-user ledger after login/reload.
   useEffect(() => {
     if (!isWalletConnected || !userAccount.address) return;
-    const storedNullifier = localStorage.getItem(`world_id_nullifier_${userAccount.address.toLowerCase()}`);
-    const lookup = storedNullifier
-      ? getWorldIdStatus(storedNullifier)
-      : getWorldIdStatus(undefined, userAccount.address);
-    lookup
-      .then((status) => {
-        if (status.no_data || !status.claimed) return;
-        setUserAccount((prev) => ({
-          ...prev,
-          isWorldIdVerified: true,
-          totalFreeScans: status.scans_granted ?? prev.totalFreeScans,
-          freeScansRemaining: status.scans_granted ?? prev.freeScansRemaining,
-        }));
-        // Backfill the local cache so this device also has the fast path
-        // (and a working nullifier value) from now on.
-        if (!storedNullifier && status.nullifier) {
-          localStorage.setItem(`world_id_nullifier_${userAccount.address.toLowerCase()}`, status.nullifier);
-        }
-      })
-      .catch(() => undefined);
+    void refreshEntitlementsAndLedger();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isWalletConnected, userAccount.address]);
 
   const triggerScanDirect = (address: string, network: EVMNetwork, handlers: AnalysisStreamHandlers) => {
-    // A history entry is evidence from a prior run, not a cache hit. Always
-    // request a fresh backend analysis so a reviewer can detect changed risk.
-    const isReanalysis = investigations.some(
-      (item) => item.address.toLowerCase() === address.toLowerCase() && item.network === network,
-    );
     const chainByNetwork: Record<EVMNetwork, string> = { Ethereum: 'ethereum', Base: 'base', Arbitrum: 'arbitrum', Optimism: 'optimism', 'BNB Chain': 'bsc', Polygon: 'polygon', Avalanche: 'avalanche' };
     streamContractAnalysis(address.trim(), chainByNetwork[network], {
       onProgress: handlers.onProgress,
@@ -175,17 +195,17 @@ export default function App() {
         const investigation = createInvestigationFromApiResult(address.trim(), network, result);
         setInvestigations((previous) => [investigation, ...previous]);
         setActiveToken(investigation);
-        setUserAccount((previous) => ({
-          ...previous,
-          freeScansRemaining: isReanalysis ? previous.freeScansRemaining : Math.max(0, previous.freeScansRemaining - 1),
-          totalScansExecuted: previous.totalScansExecuted + 1,
-        }));
-        setTransactions((previous) => [{ id: `tx-${Date.now()}`, timestamp: 'Just now', operation: isReanalysis ? 'Contract risk reanalysis' : 'Contract risk analysis', category: 'service', typeIcon: 'token', amount: isReanalysis ? 'Reanalysis' : '1 Scan', isCredit: false, isFree: !isReanalysis, txHash: 'Backend analysis', settlement: 'Success' }, ...previous]);
+        applyEntitlement(result.entitlement);
+        void refreshEntitlementsAndLedger();
         setCurrentView('scanner');
         handlers.onResult(result);
       },
-      onError: handlers.onError,
-    }, userAccount.address);
+      onError: (message) => {
+        // A failed analysis is refunded server-side; refresh the displayed count.
+        void refreshEntitlementsAndLedger();
+        handlers.onError(message);
+      },
+    });
   };
 
   const handleStartScan = (address: string, network: EVMNetwork, handlers?: AnalysisStreamHandlers) => {
@@ -193,7 +213,7 @@ export default function App() {
     if (!isWalletConnected) {
       setPendingScan({ address, network });
       setWalletModalPrompt(
-        `Sign in or connect your wallet to analyze ${address.slice(0, 10)}... (${network}) and view the forensic risk report.`
+        `Sign in with your passkey to analyze ${address.slice(0, 10)}... (${network}) and view the forensic risk report.`
       );
       setIsWalletModalOpen(true);
       return;
@@ -212,135 +232,41 @@ export default function App() {
   };
 
   const handleVerifyWorldIdSuccess = (scansGranted: number, nullifier: string) => {
-    setUserAccount((prev) => ({
-      ...prev,
-      isWorldIdVerified: true,
-      totalFreeScans: scansGranted,
-      freeScansRemaining: scansGranted,
-    }));
-
-    // Purely a local UX cache so this browser doesn't re-prompt Selfie
-    // Check on reload - the actual one-human-one-trial enforcement lives
-    // server-side, keyed on this same nullifier (see db/world_id_store.py).
-    if (userAccount.address) {
+    setUserAccount((prev) => ({ ...prev, isWorldIdVerified: true, totalFreeScans: scansGranted, freeScansRemaining: scansGranted }));
+    if (userAccount.address && nullifier) {
       localStorage.setItem(`world_id_nullifier_${userAccount.address.toLowerCase()}`, nullifier);
     }
-
-    const newTx: LedgerTransaction = {
-      id: 'tx-' + Date.now(),
-      timestamp: 'Just now',
-      operation: 'World ID Selfie Check Verification',
-      category: 'service',
-      typeIcon: 'fingerprint',
-      amount: `+${scansGranted} Scans (Trial)`,
-      isCredit: true,
-      isFree: true,
-      txHash: nullifier ? `${nullifier.slice(0, 6)}...${nullifier.slice(-4)}` : 'unavailable',
-      settlement: 'Verified',
-    };
-    setTransactions([newTx, ...transactions]);
+    void refreshEntitlementsAndLedger();
   };
 
-  // A real, valid Selfie Check proof - but this human already claimed
-  // their trial with a different wallet. Not an error to hide; tell the
-  // person plainly rather than silently failing or granting a second trial.
   const handleWorldIdAlreadyClaimed = (originalWalletAddress: string) => {
     const shortAddress = originalWalletAddress
       ? `${originalWalletAddress.slice(0, 6)}...${originalWalletAddress.slice(-4)}`
       : 'a different wallet';
-    window.alert(`This World ID has already claimed a free trial with ${shortAddress}. Each verified human gets one trial, regardless of wallet.`);
+    window.alert(`This World ID has already claimed its one-time trial with ${shortAddress}. Each verified human gets 3 free scans total.`);
   };
 
-  const handleAddFundsSuccess = (amount: number, network: string, method: string) => {
-    setUserAccount((prev) => ({
-      ...prev,
-      walletUsdcBalance: prev.walletUsdcBalance + amount,
-    }));
-
-    const newTx: LedgerTransaction = {
-      id: 'tx-' + Date.now(),
-      timestamp: 'Just now',
-      operation: method === 'buy' ? `Buy USDC (${network})` : `Receive USDC (${network})`,
-      category: 'wallet',
-      typeIcon: 'south_west',
-      amount: `+${amount.toFixed(2)} USDC`,
-      isCredit: true,
-      txHash: '0x' + Math.random().toString(16).slice(2, 10) + '...' + Math.random().toString(16).slice(2, 6),
-      settlement: 'Confirmed',
-    };
-    setTransactions([newTx, ...transactions]);
+  const refreshRealWalletBalance = () => {
+    if (!isWalletConnected) return;
+    void getArcWallet().then((wallet) => {
+      if (!wallet.no_data) setUserAccount((prev) => ({ ...prev, walletUsdcBalance: wallet.usdc_balance ?? 0 }));
+    }).catch(() => undefined);
   };
 
-  const handleSendSuccess = (amount: number, toAddress: string, network: string) => {
-    setUserAccount((prev) => ({
-      ...prev,
-      walletUsdcBalance: Math.max(0, prev.walletUsdcBalance - amount),
-    }));
-
-    const newTx: LedgerTransaction = {
-      id: 'tx-' + Date.now(),
-      timestamp: 'Just now',
-      operation: `Send to ${toAddress.slice(0, 6)}... (${network})`,
-      category: 'wallet',
-      typeIcon: 'north_east',
-      amount: `-${amount.toFixed(2)} USDC`,
-      isCredit: false,
-      txHash: '0x' + Math.random().toString(16).slice(2, 10) + '...' + Math.random().toString(16).slice(2, 6),
-      settlement: 'Broadcasted',
-    };
-    setTransactions([newTx, ...transactions]);
+  const handleAddFundsSuccess = () => {
+    refreshRealWalletBalance();
+    void refreshEntitlementsAndLedger();
   };
 
-  const handleWithdrawSuccess = (amount: number, destination: string, rail: string) => {
-    setUserAccount((prev) => ({
-      ...prev,
-      walletUsdcBalance: Math.max(0, prev.walletUsdcBalance - amount),
-    }));
-
-    const newTx: LedgerTransaction = {
-      id: 'tx-' + Date.now(),
-      timestamp: 'Just now',
-      operation: `Withdraw to ${rail.toUpperCase()}`,
-      category: 'wallet',
-      typeIcon: 'account_balance',
-      amount: `-${amount.toFixed(2)} USDC`,
-      isCredit: false,
-      txHash: '0x' + Math.random().toString(16).slice(2, 10) + '...' + Math.random().toString(16).slice(2, 6),
-      settlement: 'Processed',
-    };
-    setTransactions([newTx, ...transactions]);
+  const handleSendSuccess = (_amount: number, _toAddress: string, _network: string) => {
+    refreshRealWalletBalance();
+    void refreshEntitlementsAndLedger();
   };
 
-  const handleSubscribeSuccess = (planName: string, amount: number, scans: number) => {
-    setUserAccount((prev) => {
-      const newWalletBal = Math.max(0, prev.walletUsdcBalance - amount);
-      return {
-        ...prev,
-        walletUsdcBalance: newWalletBal,
-        riskSearcherBalance: prev.riskSearcherBalance + amount,
-        activeSubscription: {
-          tier: 'PRO',
-          name: planName,
-          status: 'ACTIVE',
-          renewsOn: 'Next month',
-          priceMonthly: amount,
-          scansIncluded: scans,
-        },
-      };
-    });
-
-    const newTx: LedgerTransaction = {
-      id: 'tx-' + Date.now(),
-      timestamp: 'Just now',
-      operation: `Subscribe to ${planName}`,
-      category: 'service',
-      typeIcon: 'stars',
-      amount: `-${amount.toFixed(2)} USDC`,
-      isCredit: false,
-      txHash: '0x' + Math.random().toString(16).slice(2, 10) + '...' + Math.random().toString(16).slice(2, 6),
-      settlement: 'Active',
-    };
-    setTransactions([newTx, ...transactions]);
+  const handleSubscribeSuccess = (entitlement: EntitlementState) => {
+    applyEntitlement(entitlement);
+    refreshRealWalletBalance();
+    void refreshEntitlementsAndLedger();
   };
 
   // walletName is a display label ("Passkey Smart Account", ...); address/
@@ -354,6 +280,9 @@ export default function App() {
     connection: { address: string; accountType: 'ERC-4337' | 'EOA'; ensOrAlias: string },
   ) => {
     setIsWalletConnected(true);
+    setTransactions([]);
+    setInvestigations(INITIAL_INVESTIGATIONS);
+    setActiveToken(INITIAL_INVESTIGATIONS[0]);
 
     setUserAccount((prev) => ({
       ...prev,
@@ -363,25 +292,35 @@ export default function App() {
       accountType: connection.accountType,
     }));
 
-    // If user attempted a scan before logging in, immediately execute it now!
+    // If the user attempted a scan before signing in, load the authoritative
+    // entitlement first so the scanner does not briefly mistake an existing
+    // paid/free balance for zero and show the wrong access prompt.
     if (pendingScan) {
       const target = pendingScan;
       setPendingScan(null);
       setWalletModalPrompt(undefined);
       setIsWalletModalOpen(false);
-      setScannerAutoScan({ id: Date.now(), address: target.address, network: target.network });
       setCurrentView('scanner');
       window.scrollTo({ top: 0, behavior: 'smooth' });
+      void getEntitlements()
+        .then((state) => applyEntitlement(state))
+        .catch(() => undefined)
+        .finally(() => setScannerAutoScan({ id: Date.now(), address: target.address, network: target.network }));
     } else {
       setWalletModalPrompt(undefined);
     }
   };
 
   const handleDisconnectWallet = () => {
+    void logoutSession();
     setIsWalletConnected(false);
     setPendingScan(null);
+    setScannerAutoScan(null);
     setWalletModalPrompt(undefined);
-    // If the user was on a protected page (wallet/accounts or scanner), return safely to public overview
+    setUserAccount(INITIAL_USER_ACCOUNT);
+    setTransactions([]);
+    setInvestigations(INITIAL_INVESTIGATIONS);
+    setActiveToken(INITIAL_INVESTIGATIONS[0]);
     if (currentView === 'accounts' || currentView === 'scanner') {
       setCurrentView('landing');
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -394,12 +333,12 @@ export default function App() {
       if (view === 'accounts') {
         setWalletModalPrompt(
           customPrompt ||
-            'Authentication Required: Connect your Web3 wallet or sign in with Passkey / Google / Apple to access your personal wallet, on-chain balances, and API credentials.'
+            'Authentication Required: Sign in with your passkey to access your Arc Testnet wallet balance, scan credits, and activity.'
         );
       } else {
         setWalletModalPrompt(
           customPrompt ||
-            'Authentication Required: Connect your Web3 wallet or sign in to launch deep forensic scans and view interactive contract risk analysis.'
+            'Authentication Required: Sign in with your passkey to launch deep forensic scans and view interactive contract risk analysis.'
         );
       }
       setIsWalletModalOpen(true);
@@ -418,7 +357,7 @@ export default function App() {
         onNavigate={handleNavigate}
         userAccount={userAccount}
         onOpenWalletModal={() => {
-          setWalletModalPrompt('Connect your Web3 wallet or sign in with Google / Apple / Passkey.');
+          setWalletModalPrompt('Sign in with your passkey.');
           setIsWalletModalOpen(true);
         }}
         isWalletConnected={isWalletConnected}
@@ -431,7 +370,7 @@ export default function App() {
           <LandingPage
             onStartScan={handleStartScan}
             onOpenWalletModal={() => {
-              setWalletModalPrompt('Sign in or connect your wallet to analyze contracts and access the live risk dashboard.');
+              setWalletModalPrompt('Sign in with your passkey to analyze contracts and access the live risk dashboard.');
               setIsWalletModalOpen(true);
             }}
             onNavigate={handleNavigate}
@@ -461,7 +400,7 @@ export default function App() {
             isWalletConnected={isWalletConnected}
             onOpenWalletModal={() => {
               setWalletModalPrompt(
-                'Authentication Required: Connect your Web3 wallet or sign in with Google / Apple / Passkey to unlock the forensic terminal & dashboard.'
+                'Authentication Required: Sign in with your passkey to unlock the scanner and dashboard.'
               );
               setIsWalletModalOpen(true);
             }}
@@ -474,7 +413,7 @@ export default function App() {
             transactions={transactions}
             onOpenAddFundsModal={(initialTab) => {
               if (!isWalletConnected) {
-                setWalletModalPrompt('Sign in or connect your wallet to deposit or purchase self-custodial USDC.');
+                setWalletModalPrompt('Sign in with your passkey to fund your Arc Testnet wallet.');
                 setIsWalletModalOpen(true);
                 return;
               }
@@ -482,7 +421,7 @@ export default function App() {
             }}
             onOpenSendModal={() => {
               if (!isWalletConnected) {
-                setWalletModalPrompt('Sign in or connect your wallet to send USDC.');
+                setWalletModalPrompt('Sign in with your passkey to send USDC.');
                 setIsWalletModalOpen(true);
                 return;
               }
@@ -490,7 +429,7 @@ export default function App() {
             }}
             onOpenWithdrawModal={() => {
               if (!isWalletConnected) {
-                setWalletModalPrompt('Sign in or connect your wallet to withdraw self-custodial USDC.');
+                setWalletModalPrompt('Sign in with your passkey to view wallet features. Off-ramp is coming soon.');
                 setIsWalletModalOpen(true);
                 return;
               }
@@ -498,7 +437,7 @@ export default function App() {
             }}
             onOpenSubscriptionModal={() => {
               if (!isWalletConnected) {
-                setWalletModalPrompt('Sign in or connect your wallet to manage or activate a Pro Analyst subscription.');
+                setWalletModalPrompt('Sign in with your passkey to buy a 10-scan testnet access pack.');
                 setIsWalletModalOpen(true);
                 return;
               }
@@ -506,7 +445,7 @@ export default function App() {
             }}
             onOpenWorldIdModal={() => {
               if (!isWalletConnected) {
-                setWalletModalPrompt('Sign in or connect your wallet to verify World ID humanity and unlock free scans.');
+                setWalletModalPrompt('Sign in with your passkey to verify World ID humanity and unlock free scans.');
                 setIsWalletModalOpen(true);
                 return;
               }
@@ -515,7 +454,7 @@ export default function App() {
             isWalletConnected={isWalletConnected}
             onOpenWalletModal={() => {
               setWalletModalPrompt(
-                'Authentication Required: Connect your Web3 wallet or sign in with Google / Apple / Passkey to access your personal balances, execution node, and API credentials.'
+                'Authentication Required: Sign in with your passkey to access your real Arc Testnet balance, scan credits, and activity.'
               );
               setIsWalletModalOpen(true);
             }}
@@ -532,7 +471,7 @@ export default function App() {
             isWalletConnected={isWalletConnected}
             onOpenWalletModal={(prompt) => {
               setWalletModalPrompt(
-                prompt || 'Sign in or connect your wallet to launch archival EVM traces and contract audits.'
+                prompt || 'Sign in with your passkey to run contract analysis on the selected EVM network.'
               );
               setIsWalletModalOpen(true);
             }}
@@ -543,7 +482,7 @@ export default function App() {
           <PricingView
             onOpenSubscriptionModal={() => {
               if (!isWalletConnected) {
-                setWalletModalPrompt('Sign in or connect your wallet to subscribe to Pro Analyst with USDC.');
+                setWalletModalPrompt('Sign in with your passkey to buy 10 scan credits with $5 testnet USDC.');
                 setIsWalletModalOpen(true);
                 return;
               }
@@ -551,7 +490,7 @@ export default function App() {
             }}
             onOpenWorldIdModal={() => {
               if (!isWalletConnected) {
-                setWalletModalPrompt('Sign in or connect your wallet to verify with World ID and claim 15 free forensic scans.');
+                setWalletModalPrompt('Sign in with your passkey to verify with World ID and claim 3 free forensic scans.');
                 setIsWalletModalOpen(true);
                 return;
               }
@@ -561,7 +500,7 @@ export default function App() {
             userAccount={userAccount}
             isWalletConnected={isWalletConnected}
             onOpenWalletModal={() => {
-              setWalletModalPrompt('Sign in or connect your wallet to select a plan or verify humanity.');
+              setWalletModalPrompt('Sign in with your passkey to buy scan credits or verify humanity.');
               setIsWalletModalOpen(true);
             }}
           />
@@ -574,7 +513,7 @@ export default function App() {
             onOpenWalletModal={(prompt) => {
               setWalletModalPrompt(
                 prompt ||
-                  'Authentication Required: Connect your Web3 wallet or sign in to access your personal API keys and forensic tools.'
+                  'Authentication Required: Sign in with your passkey to access your wallet, scan credits, and analysis tools.'
               );
               setIsWalletModalOpen(true);
             }}
@@ -588,7 +527,7 @@ export default function App() {
         isWalletConnected={isWalletConnected}
         onOpenWalletModal={(prompt) => {
           setWalletModalPrompt(
-            prompt || 'Authentication Required: Connect your Web3 wallet or sign in to access this section.'
+            prompt || 'Authentication Required: Sign in with your passkey to access this section.'
           );
           setIsWalletModalOpen(true);
         }}
@@ -650,7 +589,6 @@ export default function App() {
         walletBalance={userAccount.walletUsdcBalance}
         userAddress={userAccount.address}
         onClose={() => setIsWithdrawModalOpen(false)}
-        onWithdrawSuccess={handleWithdrawSuccess}
       />
 
       {/* Subscription Modal */}
@@ -662,7 +600,7 @@ export default function App() {
         onSubscribeSuccess={handleSubscribeSuccess}
         onOpenAddFundsModal={() => {
           setIsSubscriptionModalOpen(false);
-          setAddFundsModalState({ isOpen: true, tab: 'buy' });
+          setAddFundsModalState({ isOpen: true, tab: 'receive' });
         }}
       />
     </div>

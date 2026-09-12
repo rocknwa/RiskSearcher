@@ -4,7 +4,7 @@ Arc is Circle's stablecoin-native L1: USDC is Arc's *native* asset (like ETH
 is native on Ethereum), not an ERC-20 token on it. This module uses Circle's
 official `circle-developer-controlled-wallets` Python SDK to give each
 connected user a real Developer-Controlled Wallet on Arc Testnet, and to
-move real USDC for deposits, withdrawals, and subscription payments.
+move real testnet USDC for wallet transfers and scan-pack payments.
 
 Degrades cleanly to a `no_data`-shaped dict when CIRCLE_API_KEY /
 CIRCLE_ENTITY_SECRET aren't configured or a call fails, matching the
@@ -22,7 +22,7 @@ Setup required (see README for the full walkthrough):
      otherwise one is created automatically on first use and cached in
      data/arc_state.json.
   5. Set ARC_TREASURY_ADDRESS to a real Arc Testnet address you control —
-     this is where subscription payments are sent.
+     this is where scan-pack payments are sent.
 """
 
 from __future__ import annotations
@@ -219,8 +219,8 @@ def get_wallet_balance(wallet_id: str) -> dict:
 
 def send_usdc(wallet_id: str, destination_address: str, amount: float) -> dict:
     """Real, on-chain native-USDC transfer out of a Developer-Controlled
-    wallet on Arc Testnet. Used for both user withdrawals and subscription
-    payments — same underlying operation, different destination address."""
+    wallet on Arc Testnet. Used for direct Arc transfers and scan-pack
+    payments — it is not a fiat off-ramp or bridge."""
     client = _get_client()
     if client is None:
         return _unavailable("circle_not_configured")
@@ -250,3 +250,76 @@ def send_usdc(wallet_id: str, destination_address: str, amount: float) -> dict:
     except Exception as exc:
         print(f"    [ARC] Transfer failed from wallet {wallet_id} to {destination_address}: {exc}")
         return _unavailable("transfer_failed")
+
+
+def _circle_api_request(path: str, params: dict | None = None) -> dict:
+    """Small read-only REST helper for transaction status/history.
+
+    The Python DCW SDK is used for wallet creation/transfers above.  Circle's
+    REST transaction endpoints are intentionally used for reads here because
+    their response shape is stable across SDK generator versions and lets the
+    backend reconcile initiated payments after a restart.
+    """
+    api_key = os.environ.get("CIRCLE_API_KEY", "").strip()
+    if not api_key:
+        return _unavailable("circle_not_configured")
+    base = os.environ.get("CIRCLE_API_BASE_URL", "https://api.circle.com").strip().rstrip("/")
+    try:
+        import requests
+        response = requests.get(
+            f"{base}{path}",
+            params=params,
+            headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
+            timeout=20,
+        )
+        if response.status_code >= 400:
+            print(f"    [ARC] Circle REST {path} returned {response.status_code}: {response.text[:300]}")
+            return _unavailable(f"circle_http_{response.status_code}")
+        return {"no_data": False, "payload": response.json()}
+    except Exception as exc:
+        print(f"    [ARC] Circle REST request failed for {path}: {exc}")
+        return _unavailable("circle_request_failed")
+
+
+def get_transaction(transaction_id: str) -> dict:
+    """Return Circle's live state/txHash for one developer-wallet tx."""
+    if not transaction_id:
+        return _unavailable("missing_transaction_id")
+    raw = _circle_api_request(f"/v1/w3s/transactions/{transaction_id}")
+    if raw.get("no_data"):
+        return raw
+    payload = raw.get("payload") or {}
+    data = payload.get("data") or {}
+    tx = data.get("transaction") or data
+    if not isinstance(tx, dict):
+        return _unavailable("invalid_transaction_response")
+    return {
+        "no_data": False,
+        "transaction_id": tx.get("id") or transaction_id,
+        "status": str(tx.get("state") or tx.get("status") or "UNKNOWN").upper(),
+        "tx_hash": tx.get("txHash") or tx.get("tx_hash") or "",
+        "raw": tx,
+    }
+
+
+def list_wallet_transactions(wallet_id: str, limit: int = 50) -> dict:
+    """Real Circle transaction history for one RiskSearcher DCW wallet."""
+    if not wallet_id:
+        return _unavailable("missing_wallet_id")
+    raw = _circle_api_request(
+        "/v1/w3s/transactions",
+        params={
+            "walletIds": wallet_id,
+            "blockchain": _arc_blockchain(),
+            "includeAll": "true",
+            "pageSize": max(1, min(int(limit), 50)),
+        },
+    )
+    if raw.get("no_data"):
+        return raw
+    payload = raw.get("payload") or {}
+    data = payload.get("data") or {}
+    transactions = data.get("transactions") or []
+    if not isinstance(transactions, list):
+        return _unavailable("invalid_transaction_list_response")
+    return {"no_data": False, "transactions": transactions}

@@ -85,7 +85,7 @@ export const WorldIdModal: React.FC<WorldIdModalProps> = ({
     }
     setVerificationState('success');
     setTimeout(() => {
-      onVerifySuccess(claim.scans_granted ?? 15, claim.nullifier || '');
+      onVerifySuccess(claim.scans_granted ?? 3, claim.nullifier || '');
       onClose();
       setVerificationState('idle');
       setWidgetOpen(false);
@@ -164,7 +164,7 @@ export const WorldIdModal: React.FC<WorldIdModalProps> = ({
 
           <div className="flex items-center justify-between pt-1 border-t border-[#222a3d]/60 text-[11px]">
             <span className="text-[#8c909f]">Trial Allocation:</span>
-            <span className="text-[#dae2fd] font-bold">15 Free Pre-Flight Scans</span>
+            <span className="text-[#dae2fd] font-bold">3 Free Contract Scans</span>
           </div>
         </div>
 
