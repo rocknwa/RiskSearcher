@@ -315,3 +315,7 @@ The point is not “RiskSearcher needs major funding before it can work.” The 
 **Planned analysis expansion beyond EVM:** chain support for the actual risk analysis is planned to grow progressively beyond EVM chains, not just add more EVM networks to the existing list.
 
 Also live in this submission: authenticated per-user **scan history**, **scan entitlements**, and **Ledger Activity** persisted in Firestore. Returning users recover the account state that matters instead of getting a fresh mock/session-only account after every browser refresh.
+
+## Contact
+
+LinkedIn: [Therock Ani](https://www.linkedin.com/in/therock-ani-13336224b/)
