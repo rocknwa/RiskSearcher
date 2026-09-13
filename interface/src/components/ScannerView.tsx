@@ -54,6 +54,20 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
     setSelectedNetwork(activeToken.network);
   }, [activeToken]);
 
+  // A live analysis is streamed over the current browser connection. Warn before
+  // refresh/close while the stream is active so users do not accidentally interrupt it.
+  useEffect(() => {
+    if (!isScanning) return;
+
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isScanning]);
+
   const networks: EVMNetwork[] = [
     'Ethereum',
     'Base',
@@ -550,10 +564,31 @@ Generated via RiskSearcher rules + specialist/judge pipeline`;
                 </div>
               </div>
 
-              {/* 5-Stage Live Investigation Progress Simulation */}
+              {/* 5-Stage Live Investigation Progress */}
               {isScanning ? (
-                <div className="bg-[#131b2e] p-5 rounded-xl border border-[#4cd7f6]/40 space-y-3 animate-pulse">
-                  <div className="flex items-center justify-between">
+                <div className="space-y-3">
+                  <div
+                    role="status"
+                    aria-live="polite"
+                    className="bg-[#3a2a08] border border-[#f4c95d]/45 rounded-xl px-4 py-3 flex items-start gap-3 shadow-sm"
+                  >
+                    <span className="material-symbols-outlined text-[#f4c95d] text-[20px] shrink-0 mt-0.5">
+                      wifi_tethering_error
+                    </span>
+                    <div className="min-w-0">
+                      <p className="font-mono text-xs font-bold text-[#ffe08a] uppercase tracking-wide">
+                        Scan session active — keep this page open
+                      </p>
+                      <p className="mt-1 text-xs text-[#f7e7b2] leading-relaxed">
+                        Do not refresh, close this tab, or navigate away until all 5 stages finish.
+                        RiskSearcher streams the analysis live, so a network interruption may stop the scan.
+                        Keep a stable internet connection until completion.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="bg-[#131b2e] p-5 rounded-xl border border-[#4cd7f6]/40 space-y-3 animate-pulse">
+                    <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2 font-mono text-xs text-[#4cd7f6] font-bold">
                       <span className="material-symbols-outlined animate-spin text-[18px]">sync</span>
                       <span>5-STAGE FORENSIC ORCHESTRATION IN PROGRESS</span>
@@ -595,6 +630,7 @@ Generated via RiskSearcher rules + specialist/judge pipeline`;
                       </span>
                       <span>Stage 5: Generating final evidence report...</span>
                     </div>
+                  </div>
                   </div>
                 </div>
               ) : (
