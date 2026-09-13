@@ -205,7 +205,8 @@ RiskSearcher/
 │       └── components/        # scanner, account/ledger, pricing, passkey, World ID, subscription UI
 ├── tests/                     # Engine + Graph + Arc + World ID + auth/entitlement/API regressions
 ├── docs/
-│   ├── PRIOR_STATE.md         # Stable pre-hackathon state
+│   ├── PRIOR_STATE.md          # Stable pre-hackathon state
+|   ├── world-selfie-check-feedback.md # World Selfie Check sandbox and integration feedback
 │   └── diagrams/
 │       ├── architecture.svg   # Full product architecture
 │       └── architecture-arc.svg # Circle/Arc payment + entitlement flow
