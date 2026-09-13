@@ -309,8 +309,9 @@ def list_wallet_transactions(wallet_id: str, limit: int = 50) -> dict:
     raw = _circle_api_request(
         "/v1/w3s/transactions",
         params={
+            # Circle rejects `blockchain` when filtering by walletIds.
+            # The wallet ID already scopes this query to the correct Arc wallet/network.
             "walletIds": wallet_id,
-            "blockchain": _arc_blockchain(),
             "includeAll": "true",
             "pageSize": max(1, min(int(limit), 50)),
         },
