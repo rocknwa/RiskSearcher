@@ -274,7 +274,7 @@ RiskSearcher is a **risk monitor** (the track's own example category — *"resea
 - **Why USDC:** the product sells a dollar-denominated scan pack, so a stable asset keeps the displayed price and paid price aligned. On Arc, USDC also serves as the native gas asset, avoiding a separate gas-token balance for the testnet payment flow.
 - **What “subscription” means here:** it is a manual scan-pack purchase, not scheduled recurring billing. Each confirmed $5 payment adds 10 scan credits; RiskSearcher never implies an automatic future charge.
 
-### 11.3 World — Selfie Check (Sybil-Resistant Free Trial)
+### 10.3 World — Selfie Check (Sybil-Resistant Free Trial)
 
 RiskSearcher gates its free trial (3 scans) behind [World ID Selfie Check](https://docs.world.org/world-id/credentials/11), using it exactly as the track intends — as an abuse-prevention signal, not a decorative badge.
 
@@ -283,7 +283,7 @@ RiskSearcher gates its free trial (3 scans) behind [World ID Selfie Check](https
 - **RP-signature generation, verified byte-for-byte:** World ID 4.0 requires every request to carry a signed `rp_context`. The official `@worldcoin/idkit-server` package refuses to run outside genuine Node.js (confirmed the hard way — it hung indefinitely on Vercel's Edge runtime, then explicitly rejected running there once the runtime mismatch was fixed), so signing was ported to Python instead and checked byte-for-byte against the real JS source's message construction, hashing, and a self-consistent sign/recover round-trip before being trusted.
 - **Cross-device session restoration:** verification is bound to a human, not a browser — [`db/world_id_store.py`](./db/world_id_store.py)'s `get_claim_status_by_wallet_address()` lets a returning user's *other* device recognize an existing verification via wallet address, not just a locally-cached nullifier from the device that originally verified.
 
-### 11.4 What each track's evidence looks like end-to-end
+### 10.4 What each track's evidence looks like end-to-end
 
 | Requirement | Where to see it |
 |---|---|
@@ -295,7 +295,7 @@ RiskSearcher gates its free trial (3 scans) behind [World ID Selfie Check](https
 | World: one-trial-per-human enforced | `tests/test_world_id_store.py::test_status_by_wallet_address_finds_an_existing_claim` |
 | World: cross-device status lookup | `tests/test_api_world_id_endpoint.py::test_status_falls_back_to_address_when_no_nullifier` |
 
-### 11.5 Path to Mainnet & Forward Roadmap
+### 10.5 Path to Mainnet & Forward Roadmap
 
 Everything above this line is implemented and tested today. This section is explicitly the opposite — plans, not claims — kept separate so it's never mistaken for current capability.
 
