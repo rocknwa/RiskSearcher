@@ -242,23 +242,17 @@ Shrimp and Dolphin are near-identical in raw transfer *count* but completely dif
 
 ---
 
-## 9. AI-assisted development
-
-AI coding tools were used during development for implementation assistance, debugging, documentation, and code review. Architecture, integration decisions, product design, testing, and final implementation decisions were directed and validated by the project author.
-
----
-
-## 10. Security note
+## 9. Security note
 
 Keep secrets and provider keys in local environment files only; do not commit them to source control. Full contract source is sent to configured LLM providers as part of specialist/judge prompts — review your provider's data-handling terms if that matters for your use case.
 
 ---
 
-## 11. ETHOnline 2026 — Track Submissions
+## 10. ETHOnline 2026 — Track Submissions
 
 RiskSearcher is submitted in the **Continuity pool** (extending the pre-existing repo documented in [`docs/PRIOR_STATE.md`](./docs/PRIOR_STATE.md)) for three tracks. All three integrations are live, tested, and load-bearing — not stubs added for qualification.
 
-### 11.1 The Graph — Best AI Tooling or AI Use Case (Continuity)
+### 10.1 The Graph — Best AI Tooling or AI Use Case (Continuity)
 
 RiskSearcher is a **risk monitor** (the track's own example category — *"research assistants, trading and execution agents, portfolio copilots, risk monitors"*), not a tooling submission, so the reusable-infrastructure bar applies to the tooling half of the track, not to this.
 
@@ -267,7 +261,7 @@ RiskSearcher is a **risk monitor** (the track's own example category — *"resea
 - **Defensive data handling:** pool enumeration now returns the expected pool data for tested tokens. `pools_data_reliable` remains as a guardrail for future upstream/API inconsistencies: if liquidity is present but pool-level data is internally inconsistent, RiskSearcher marks those fields unavailable instead of turning missing data into a misleading confirmed zero.
 - **Visible in the product**, not just the backend: a "Live Liquidity — The Graph" panel renders real TVL, pool count, pool age, and swap volume directly in the scan report UI.
 
-### 11.2 Circle Arc — Treasury / FX Track
+### 10.2 Circle Arc — Treasury / FX Track
 
 - **Passkey identity:** [`interface/src/services/passkeyWallet.ts`](./interface/src/services/passkeyWallet.ts) uses Circle **Modular Wallets** to create/recover a WebAuthn-secured ERC-4337 smart account. The backend then challenges that account and verifies its ERC-6492/ERC-1271 signature before creating a RiskSearcher session. The wallet address is never trusted merely because the browser supplied it.
 - **Real Arc treasury wallet:** [`rpc/arc_provider.py`](./rpc/arc_provider.py) creates/resolves a Circle **Developer-Controlled Wallet** on Arc, keyed by Circle `ref_id` to the authenticated passkey address. The account view reads the live USDC balance; there is no seeded `$50` or demo balance.
